@@ -1,91 +1,59 @@
 # Fishing Clues
 
-Fishing Clues is an open-source Dalamud plugin for **FINAL FANTASY XIV** that provides a spoiler-conscious, Fishing Log-style journal with additional information for discovering and catching fish.
-
-> [!IMPORTANT]
-> **AI-generated code:** Fishing Clues was developed with generative AI. A substantial portion of this codebase was generated through AI coding tools under project-owner direction and testing. See [AI-GENERATED-NOTICE.md](AI-GENERATED-NOTICE.md).
+A Dalamud plugin for FFXIV that gives you a better Fishing Log: spoiler-conscious, and packed with the info you actually need to find and catch fish.
 
 ## What it does
 
-- Provides a custom Fishing Log-style journal.
-- Organizes fishing locations by region and area.
-- Separates caught and uncaught fish.
-- Keeps unrevealed fish names hidden where possible to preserve discovery.
-- Shows catch-condition information such as bait paths, weather, time windows, intuition requirements, hookset/tug information, snagging, lures, and spearfishing data when available.
-- Supports a native-style UI built with KamiToolKit.
-- Can optionally replace the normal Fishing Log entry point.
-- Can refresh fishing-condition data from upstream community data sources.
-- Includes a diagnostics command for troubleshooting journal/discovery behavior.
-
-## Current version
-
-`3.9.0`
-
-This repository represents the v3.9.0 source snapshot. The searchable all-fish guide, broader per-hole bait accuracy work, and bottom-dropdown animation changes discussed after this snapshot are **not** included in this version.
+- A custom Fishing Log-style journal, organized by region and area
+- Keeps caught and uncaught fish separated
+- Hides fish you haven't discovered yet, so you don't get spoiled
+- Shows the catch details that matter per fish: bait paths, weather, time windows, intuition requirements, hookset/tug info, snagging, lures, spearfishing data
+- Native-feeling UI, built on KamiToolKit
+- Can replace the default Fishing Log entry point
+- Pulls fresh fishing-condition data from community sources
+- Has a diagnostics command for when something looks off
 
 ## Commands
 
-- `/fishingclues` — open Fishing Clues.
-- `/fishingclues settings` — open plugin settings.
-- `/fishingclues diagnostics` — open diagnostic information useful for troubleshooting.
+- `/fishingclues` - open the journal
+- `/fishingclues settings` - open settings
+- `/fishingclues diagnostics` - troubleshooting info
 
-## Repository layout
+## Building it
 
-```text
-src/FishingClues/              Main plugin source and bundled fishing data
-vendor/KamiToolKit/            Vendored KamiToolKit source (MIT)
-vendor/GatherBuddy/            GatherBuddy fish-data source subset (Apache-2.0)
-vendor/ff14-fish-tracker-app/  FFX|V Fish Tracker data snapshot (MIT)
-tools/build-fish-data.mjs      Rebuilds FishConditions.json from vendored data
-.github/workflows/             GitHub Actions build validation
+You'll need the .NET 10 SDK and an internet connection (for the Dalamud.NET.Sdk NuGet restore).
+
 ```
-
-## Building
-
-### Requirements
-
-- .NET 10 SDK
-- Internet access for NuGet restore of `Dalamud.NET.Sdk`
-
-From the repository root:
-
-```bash
 dotnet restore src/FishingClues/FishingClues.csproj
 dotnet build src/FishingClues/FishingClues.csproj -c Release
 ```
 
-The project targets Dalamud API level 15 through `Dalamud.NET.Sdk/15.0.0` and builds KamiToolKit from the vendored source as a project reference.
+Targets Dalamud API level 15 via `Dalamud.NET.Sdk/15.0.0`. KamiToolKit builds from the vendored source as a project reference.
 
-## Rebuilding fishing data
+To rebuild the bundled fish data from the vendored upstream sources (needs Node.js):
 
-The checked-in `FishConditions.json` is generated from the vendored upstream data snapshots. With Node.js installed:
-
-```bash
+```
 node tools/build-fish-data.mjs
 ```
 
-The script writes the generated data to `src/FishingClues/FishConditions.json`.
+## Credits
 
-## Upstream data and libraries
+Fishing Clues wouldn't exist without these open-source projects:
 
-Fishing Clues incorporates or derives data/code from these open-source projects:
+- [FFXIV Fish Tracker App](https://ff14fish.carbuncleplushy.com/) by icykoneko and contributors - MIT
+- [KamiToolKit](https://github.com/MidoriKami/KamiToolKit) by MidoriKami - MIT
+- [GatherBuddy](https://github.com/Ottermandias/GatherBuddy) by Ottermandias and contributors - Apache-2.0
 
-- **FFX|V Fish Tracker App** by icykoneko and contributors — MIT License.
-- **KamiToolKit** by MidoriKami — MIT License.
-- **GatherBuddy** by Ottermandias and contributors — Apache License 2.0.
-
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the license files preserved under `vendor/` for details.
+Full details in `THIRD_PARTY_NOTICES.md`.
 
 ## Contributing
 
-Issues and pull requests are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md). When submitting changes produced with AI tools, disclose that fact in the pull request so reviewers know what level of verification may be appropriate.
+Issues and PRs are welcome - see `CONTRIBUTING.md`. Heads up: a good chunk of this codebase was built with AI coding tools, with me directing and testing along the way (see `AI-GENERATED-NOTICE.md`). If you're submitting AI-assisted changes too, please disclose that in your PR.
 
 ## Disclaimer
 
-Fishing Clues is an unofficial third-party project. It is not affiliated with or endorsed by Square Enix, the Dalamud project, or the upstream projects whose open-source data/libraries are used here. FINAL FANTASY XIV and related names are trademarks of their respective owners.
+Fishing Clues is an unofficial, fan-made project. It's not affiliated with or endorsed by Square Enix or the Dalamud project. FINAL FANTASY XIV and related trademarks belong to their respective owners.
 
 ## License
 
-Fishing Clues is released under the [MIT License](LICENSE), copyright © 2026 mcbro.
-
-Third-party components and data remain under their respective licenses and are not relicensed by the Fishing Clues MIT License.
+MIT - see `LICENSE`. Third-party components keep their own licenses (see `THIRD_PARTY_NOTICES.md`).
