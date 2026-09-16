@@ -1,0 +1,17 @@
+Fishing-condition data is derived from the open-source FFX|V Fish Tracker App
+by icykoneko and contributors, used under its MIT license:
+https://github.com/icykoneko/ff14-fish-tracker-app
+
+The bundled fish names, descriptions, icons, journal categories, and catch
+metadata are generated from the same tracker data snapshot.
+
+The native FFXIV window is built with KamiToolKit by MidoriKami,
+used under its MIT license:
+https://github.com/MidoriKami/KamiToolKit
+
+Ordinary-fish catch requirements, plus the live fishing-hole and caught-status
+approach, are derived from GatherBuddy under the Apache License 2.0:
+https://github.com/Ottermandias/GatherBuddy
+
+Uncaught fish names stay hidden unless the native Fishing Log has already
+revealed the name to the player.
