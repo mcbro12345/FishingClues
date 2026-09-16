@@ -1,0 +1,15 @@
+{
+  "Author": "mcbro",
+  "Name": "Fishing Clues",
+  "InternalName": "FishingClues",
+  "AssemblyVersion": "3.9.0.0",
+  "Description": "A Fishing Log-style journal with Dalamud settings, stable Dalamud and experimental native journal modes, collapsible locations, fish icons, spoiler-free tracker details, and optional vanilla-log replacement.",
+  "ApplicableVersion": "any",
+  "Tags": ["fishing", "log", "completion", "spoiler-free"],
+  "DalamudApiLevel": 15,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "LoadPriority": 0,
+  "Punchline": "A spoiler-free Fishing Log with stable and native UI modes."
+}

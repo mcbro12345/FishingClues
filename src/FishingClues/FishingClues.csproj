@@ -1,0 +1,25 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <AssemblyName>FishingClues</AssemblyName>
+    <Version>3.9.0.0</Version>
+    <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../vendor/KamiToolKit/KamiToolKit.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="FishingClues.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="FishConditions.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="JournalButtonReference.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="NOTICE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="THIRD_PARTY_LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="GATHERBUDDY_LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../AI-GENERATED-NOTICE.md" Link="AI-GENERATED-NOTICE.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
