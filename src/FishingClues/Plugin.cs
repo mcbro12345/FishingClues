@@ -30,7 +30,7 @@ using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-public sealed class Plugin : IDalamudPlugin, IDisposable
+public sealed partial class Plugin : IDalamudPlugin, IDisposable
 {
     private const string CommandName = "/fishingclues";
     private static readonly string[] RegionOrder =
@@ -59,11 +59,13 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private readonly DiagnosticWindow diagnosticWindow;
     private readonly NativeJournalSessionState nativeJournalState = new();
     private NativeJournalWindow? nativeJournal;
+    private NativeJournalWindow? nativeGuide;
     private FishClueWindow? nativeClues;
     private IReadOnlyList<JournalRegion>? journalCache;
     private long lastJournalBuild;
     private ulong journalCharacterId;
     private readonly HashSet<ushort> vanillaRevealedRegions = new();
+    private long nextFishRevealScan;
     private long lastClickHandled;
     private long lastReplacement;
     private long pendingNormalLogUntil;
@@ -150,7 +152,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
 
     private void ExecuteMainCommandDetour(nint module, uint command)
     {
-        if (configuration.ReplaceNormalFishingLog && command == fishingLogCommandId)
+        if (!allowExplicitVanillaLog && configuration.ReplaceNormalFishingLog && command == fishingLogCommandId)
         {
             menuOpenRequested = true;
             return;
@@ -161,6 +163,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     public void Dispose()
     {
         disposed = true;
+        ReleaseItemMenuData();
         refreshCancellation.Cancel();
         mainCommandHook?.Dispose();
         CommandManager.RemoveHandler(CommandName);
@@ -175,6 +178,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         if (nativeUiInitialization.IsCompletedSuccessfully)
         {
             nativeJournal?.Dispose();
+            nativeGuide?.Dispose();
             nativeClues?.Dispose();
             KamiToolKitLibrary.Dispose();
         }
@@ -241,8 +245,50 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private void OnDraw()
     {
         windowSystem.Draw();
+        DrawItemMenu();
         if (configuration.OpenUnknownOnLeftClick && !configuration.ReplaceNormalFishingLog)
             TryHandleUnknownFishClick();
+    }
+
+    private static uint pendingItemMenu;
+    private System.Runtime.InteropServices.GCHandle itemLinkPayload;
+    private nint itemLinkData;
+    private uint openingLinkedItem;
+    internal static void RequestItemMenu(uint itemId) => pendingItemMenu = itemId;
+    private unsafe void DrawItemMenu()
+    {
+        if (pendingItemMenu == 0) return;
+        uint itemId = pendingItemMenu;
+        pendingItemMenu = 0;
+        var panelPtr = GameGui.GetAddonByName("ChatLogPanel_0");
+        if (panelPtr.IsNull) { Log.Warning("Cannot open native item menu: chat panel is unavailable."); return; }
+        var panel = (AddonChatLogPanel*)panelPtr.Address;
+        if (panel->LogViewer.ChatText == null) return;
+        ReleaseItemMenuData();
+        var payload = new Dalamud.Game.Text.SeStringHandling.SeString(
+            new Dalamud.Game.Text.SeStringHandling.Payloads.ItemPayload(itemId, false),
+            new Dalamud.Game.Text.SeStringHandling.Payloads.TextPayload(ItemName(itemId)),
+            Dalamud.Game.Text.SeStringHandling.Payloads.RawPayload.LinkTerminator).Encode();
+        itemLinkPayload = System.Runtime.InteropServices.GCHandle.Alloc(payload, System.Runtime.InteropServices.GCHandleType.Pinned);
+        itemLinkData = System.Runtime.InteropServices.Marshal.AllocHGlobal(sizeof(LinkData));
+        var link = (LinkData*)itemLinkData;
+        *link = new LinkData {
+            LinkType = (byte)Lumina.Text.Payloads.LinkMacroPayloadType.Item,
+            UIntValue1 = itemId,
+            Payload = (byte*)itemLinkPayload.AddrOfPinnedObject(),
+            PayloadEnd = checked((ushort)payload.Length),
+        };
+        // Use the actual chat handler. It builds the game's menu and invokes
+        // the normal context-menu hooks, including other installed plugins.
+        openingLinkedItem = itemId;
+        try { panel->LogViewer.HandleLinkClick(link); }
+        finally { openingLinkedItem = 0; }
+    }
+    private void ReleaseItemMenuData()
+    {
+        if (itemLinkPayload.IsAllocated) itemLinkPayload.Free();
+        if (itemLinkData != 0) System.Runtime.InteropServices.Marshal.FreeHGlobal(itemLinkData);
+        itemLinkData = 0;
     }
 
     private unsafe void OnFrameworkUpdate(IFramework framework)
@@ -453,9 +499,9 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                     configuration.NativeRegionWidth, configuration.NativeAreaWidth,
                     configuration.NativeAreaDropdownWidth, configuration.ShowOpenNormalLogButton,
                     OpenFish, OpenNormalFishingLog, configuration, BuildFishSection,
-                    Path.Combine(PluginInterface.AssemblyLocation.DirectoryName!, "JournalButtonReference.png"),
                     ex => Log.Error(ex, "Native journal button failed; using the text fallback."),
-                    () => PluginInterface.SavePluginConfig(configuration), AddonEvents)
+                    () => PluginInterface.SavePluginConfig(configuration), AddonEvents,
+                    () => _ = OpenGuideAsync(), guideDetails: BuildGuideDetails)
                 {
                     InternalName = "FishingCluesJournalNative",
                     Title = "Fishing Log",
@@ -470,6 +516,48 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             });
         }
         catch (Exception ex) { Log.Error(ex, "Could not open the native Fishing Clues journal."); }
+    }
+
+    private async Task OpenGuideAsync(string? query = null, uint selectItemId = 0)
+    {
+        try {
+            await nativeUiInitialization;
+            await Framework.Run(() => {
+                if (disposed) return;
+                var regions = GetJournal();
+                var known = regions.SelectMany(r => r.Areas).SelectMany(a => a.Spots).SelectMany(s => s.Fish)
+                    .GroupBy(f => f.ItemId).ToDictionary(g => g.Key, g => g.First());
+                // Include game fish even if no unlocked or known journal spot references them.
+                foreach (var row in DataManager.GetExcelSheet<FishParameterSheet>()) {
+                    if (row.Item.RowId == 0 || known.ContainsKey(row.Item.RowId)) continue;
+                    if (!DataManager.GetExcelSheet<ItemSheet>().TryGetRow(row.Item.RowId, out var item)) continue;
+                    known[row.Item.RowId] = new JournalFish(row.RowId, row.Item.RowId, 0, true,
+                        item.Name.ToString(), item.Icon, data.Info.GetValueOrDefault(row.Item.RowId));
+                }
+                foreach (var location in data.Locations) {
+                    if (known.ContainsKey(location.ItemId) || !DataManager.GetExcelSheet<ItemSheet>().TryGetRow(location.ItemId, out var item)) continue;
+                    known[location.ItemId] = new JournalFish(location.ItemId | 0x80000000, location.ItemId, 0, true,
+                        item.Name.ToString(), item.Icon, data.Info.GetValueOrDefault(location.ItemId));
+                }
+                foreach (var pair in data.Info) {
+                    if (known.ContainsKey(pair.Key)) continue;
+                    known[pair.Key] = new JournalFish(pair.Key | 0x80000000, pair.Key, (byte)Math.Clamp(pair.Value.Level, 0, 255),
+                        true, ItemName(pair.Key), pair.Value.Icon, pair.Value);
+                }
+                var fish = known.Values.Select(f => f with { IsRevealed = true, SpotId = 0 })
+                    .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+                nativeGuide?.Dispose();
+                nativeGuide = new NativeJournalWindow(regions, new NativeJournalSessionState(),
+                    130, 240, 200, false, OpenFish, OpenNormalFishingLog, configuration, f => new FishClueSection(f.Name, Array.Empty<string>()),
+                    ex => Log.Error(ex, "Fish guide failed."),
+                    () => PluginInterface.SavePluginConfig(configuration), AddonEvents, guideFish: fish, guideDetails: BuildGuideDetails) {
+                    InternalName = "FishingCluesGuideNative", Title = "Fish Guide", Subtitle = "Fishing Clues",
+                    Size = new Vector2(560, 650), ContentPadding = new Vector2(14, 12), RememberClosePosition = true,
+                };
+                nativeGuide.Open();
+                if (!string.IsNullOrWhiteSpace(query)) nativeGuide.SubmitSearch(query, selectItemId);
+            });
+        } catch (Exception ex) { Log.Error(ex, "Could not open fish guide."); }
     }
 
     private static uint GetFishingLogIconId()
@@ -496,7 +584,12 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         pendingNormalLogSelectionAppliedAt = 0;
         pendingNormalLogSpot = null;
         replacementRequested = false;
-        ((AgentInterface*)agent)->Show();
+        // The main command initializes the fishing notebook data. Agent.Show alone
+        // can display an empty shell when the command was previously intercepted.
+        if (fishingLogCommandId != 0) {
+            UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
+            if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
+        } else ((AgentInterface*)agent)->Show();
     }
 
     private unsafe static void ConfigureNormalLogRegion(AgentFishingNote* agent, JournalSpot spot)
@@ -583,7 +676,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     {
         if (dataRefreshBusy || disposed) return;
         dataRefreshBusy = true;
-        dataRefreshStatus = "Downloading the latest catch conditions and fish information…";
+        dataRefreshStatus = "Downloading the latest catch conditions and fish information...";
         nextDataCheck = DateTime.UtcNow.AddDays(1);
         try
         {
@@ -650,7 +743,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                 bool hasItem = itemSheet.TryGetRow(itemId, out ItemSheet item);
                 string fishName = hasItem ? item.Name.ToString() : info?.Name ?? $"Fish #{itemId}";
                 uint icon = hasItem ? item.Icon : info?.Icon ?? 0;
-                entries.Add(new JournalFish(fishId, itemId, spot.GatheringLevel, IsCaught(caught, fishId), fishName, icon, info));
+                entries.Add(new JournalFish(fishId, itemId, spot.GatheringLevel, IsCaught(caught, fishId), fishName, icon, info, spot.RowId,
+                    configuration.RevealedFish.TryGetValue(journalCharacterId, out var revealed) && revealed.Contains(fishId)));
             }
             if (entries.Count == 0)
                 continue;
@@ -714,6 +808,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         AtkUnitBasePtr ptr = GameGui.GetAddonByName("FishingNote");
         AgentFishingNote* agent = AgentFishingNote.Instance();
         if (ptr.IsNull || !ptr.IsVisible || agent == null || agent->Mode != 0) return;
+        ObserveRevealedFish(agent, (AtkUnitBase*)ptr.Address);
         var places = DataManager.GetExcelSheet<PlaceNameSheet>();
         foreach (ushort id in new ushort[] { 3704, 3705, 4502 })
         {
@@ -724,6 +819,27 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                 vanillaRevealedRegions.Add(id);
                 journalCache = null;
             }
+        }
+    }
+
+    private unsafe void ObserveRevealedFish(AgentFishingNote* agent, AtkUnitBase* addon)
+    {
+        if (journalCharacterId == 0 || Environment.TickCount64 < nextFishRevealScan) return;
+        nextFishRevealScan = Environment.TickCount64 + 500;
+        var fishSheet = DataManager.GetExcelSheet<FishParameterSheet>();
+        if (!configuration.RevealedFish.TryGetValue(journalCharacterId, out var revealed))
+            configuration.RevealedFish[journalCharacterId] = revealed = new HashSet<uint>();
+        bool changed = false;
+        int count = Math.Min(agent->FishSlotCount, (byte)agent->FishSlots.Length);
+        for (int i = 0; i < count; i++) {
+            uint id = agent->FishSlots[i].Id;
+            if (id == 0 || revealed.Contains(id) || !fishSheet.TryGetRow(id, out var fish)) continue;
+            string name = ItemName(fish.Item.RowId);
+            if (IsNameVisibleInFishingLog(addon, name)) changed |= revealed.Add(id);
+        }
+        if (changed) {
+            journalCache = null;
+            PluginInterface.SavePluginConfig(configuration);
         }
     }
 
@@ -757,6 +873,26 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
 
     private unsafe void OnMenuOpened(IMenuOpenedArgs args)
     {
+        uint contextItem = args.Target switch {
+            MenuTargetInventory inventory => inventory.TargetItem?.BaseItemId ?? 0,
+            MenuTargetDefault => (uint)GameGui.HoveredItem,
+            _ => 0,
+        };
+        if (openingLinkedItem != 0) contextItem = openingLinkedItem;
+        contextItem %= 500000;
+        if (contextItem == 0 && args.Target is MenuTargetInventory) {
+            var inventoryContext = AgentInventoryContext.Instance();
+            if (inventoryContext != null && inventoryContext->TargetInventorySlot != null)
+                contextItem = inventoryContext->TargetInventorySlot->GetBaseItemId();
+        }
+        if (contextItem != 0 && (data.Locations.Any(l => l.ItemId == contextItem) ||
+            DataManager.GetExcelSheet<FishParameterSheet>().Any(f => f.Item.RowId == contextItem))) {
+            string query = ItemName(contextItem);
+            args.AddMenuItem(new MenuItem {
+                Name = "Search Fishing Clues", PrefixChar = 'F', PrefixColor = 43,
+                OnClicked = clicked => { _ = OpenGuideAsync(query, contextItem); },
+            });
+        }
         if (!string.Equals(args.AddonName, "FishingNote", StringComparison.OrdinalIgnoreCase))
             return;
         AgentFishingNote* agent = AgentFishingNote.Instance();
@@ -765,8 +901,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         List<HiddenFish> missing = CaptureMissingFish(agent);
         args.AddMenuItem(new MenuItem
         {
-            Name = missing.Count == 0 ? "Fishing Clues — all fish caught" : $"Fishing Clues — {missing.Count} uncaught",
-            PrefixChar = '?', PrefixColor = 43, IsEnabled = missing.Count > 0,
+            Name = missing.Count == 0 ? "Fishing Clues - all fish caught" : $"Fishing Clues - {missing.Count} uncaught",
+            PrefixChar = 'F', PrefixColor = 43, IsEnabled = missing.Count > 0,
             OnClicked = clicked => OpenClues(missing),
         });
     }
@@ -858,15 +994,15 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private FishClueSection BuildFishSection(JournalFish fish)
     {
         var lines = new List<string>();
-        if (fish.IsCaught && (data.Info.GetValueOrDefault(fish.ItemId) ?? fish.Info) is { } info)
+        if (fish.IdentityVisible && (data.Info.GetValueOrDefault(fish.ItemId) ?? fish.Info) is { } info)
         {
             if (!string.IsNullOrWhiteSpace(info.Waters)) lines.Add($"Waters: {info.Waters}");
-            if (!string.IsNullOrWhiteSpace(info.Region) || !string.IsNullOrWhiteSpace(info.Zone)) lines.Add($"Location: {info.Region} — {info.Zone}");
+            if (!string.IsNullOrWhiteSpace(info.Region) || !string.IsNullOrWhiteSpace(info.Zone)) lines.Add($"Location: {info.Region} - {info.Zone}");
             if (info.Collectable) lines.Add("Collectable: Yes");
             if (!string.IsNullOrWhiteSpace(info.Description)) lines.Add($"Description: {info.Description}");
         }
-        lines.AddRange(BuildRequirementLines(fish.ItemId));
-        string heading = fish.IsCaught ? fish.Name : "????";
+        lines.AddRange(BuildRequirementLines(fish.ItemId, fish.SpotId));
+        string heading = fish.IdentityVisible ? fish.Name : "????";
         if (fish.Level > 0) heading += $"   Lv. {fish.Level}";
         return new FishClueSection(heading, lines);
     }
@@ -917,48 +1053,87 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         catch (Exception ex) { Log.Error(ex, "Could not open the native fish-details window."); }
     }
 
-    private IReadOnlyList<string> BuildRequirementLines(uint itemId)
+    private IReadOnlyList<string> BuildRequirementLines(uint itemId, uint spotId = 0)
     {
         var lines = new List<string>();
-        if (!data.Fish.TryGetValue(itemId, out FishCondition? condition)) return ["Catch details are not available yet."];
-        if (condition.DataMissing is JsonElement missing && missing.ValueKind != JsonValueKind.Null && missing.ValueKind != JsonValueKind.False)
-            lines.Add("Catch information is incomplete in the source; listed conditions may be provisional.");
-        if (condition.BaitPath.Count == 0) lines.Add("Bait: no special bait listed");
-        else
-        {
-            lines.Add($"Bait: {ItemName(condition.BaitPath[0])}");
-            if (condition.AlternativeBaits.Count > 1)
-                lines.Add($"Alternative bait: {string.Join(" / ", condition.AlternativeBaits.Skip(1).Select(ItemName))}");
-            for (int i = 1; i < condition.BaitPath.Count; i++) lines.Add($"Mooch {i}: {ItemName(condition.BaitPath[i])}");
+        lines.AddRange(BuildBaitLines(itemId, spotId));
+        if (!data.Fish.TryGetValue(itemId, out FishCondition? condition)) {
+            lines.Add("Requirements unknown."); return lines;
         }
-        lines.Add($"Time: {FormatTime(condition.StartHour, condition.EndHour)}");
-        lines.Add($"Weather: {FormatWeather(condition.Weather, "Any weather")}");
+        if (!condition.RequirementsKnown) lines.Add("Some requirements are unknown.");
+        if (condition.StartHour != 0 || condition.EndHour != 24)
+            lines.Add($"Time: {FormatTime(condition.StartHour, condition.EndHour)}");
+        if (condition.Weather.Count > 0)
+            lines.Add($"Weather: {FormatWeather(condition.Weather, "No special requirement")}");
         if (condition.PreviousWeather.Count > 0) lines.Add($"Previous weather: {FormatWeather(condition.PreviousWeather, "None")}");
+        if (condition.RequirementsKnown && condition.StartHour == 0 && condition.EndHour == 24 &&
+            condition.Weather.Count == 0 && condition.PreviousWeather.Count == 0 && condition.Predators.Count == 0 &&
+            condition.Folklore is null && condition.Snagging != true && string.IsNullOrWhiteSpace(condition.Lure))
+            lines.Add("No special requirements.");
         foreach (List<uint> predator in condition.Predators)
-            if (predator.Count >= 2) lines.Add($"Intuition: catch {predator[1]} × {ItemName(predator[0])}");
+            if (predator.Count >= 2) lines.Add($"Intuition: catch {predator[1]} x {ItemName(predator[0])}");
         if (condition.IntuitionSeconds is int seconds && seconds > 0) lines.Add($"Intuition window: {seconds / 60}:{seconds % 60:00}");
         if (condition.Folklore is uint folklore) lines.Add($"Folklore: {data.Folklore.GetValueOrDefault(folklore, $"Book #{folklore}")}");
         if (condition.FishEyes == true) lines.Add("Fish Eyes: supported");
         if (condition.Snagging == true) lines.Add("Snagging: required");
         if (!string.IsNullOrWhiteSpace(condition.Lure)) lines.Add($"Lure: {condition.Lure}");
-        if (!string.IsNullOrWhiteSpace(condition.Gig)) lines.Add($"Gig size: {condition.Gig}");
+        if (!string.IsNullOrWhiteSpace(condition.Gig)) lines.Add($"Spear shadow size: {condition.Gig}");
+        if (!string.IsNullOrWhiteSpace(condition.SpearSpeed)) lines.Add($"Spear movement speed: {condition.SpearSpeed}");
         if (!string.IsNullOrWhiteSpace(condition.Tug) || !string.IsNullOrWhiteSpace(condition.Hookset)) lines.Add($"Hook: {FormatHook(condition)}");
         return lines;
+    }
+
+    private IReadOnlyList<string> BuildBaitLines(uint itemId, uint spotId)
+    {
+        var lines = new List<string>();
+        if (data.Locations.Any(l => l.ItemId == itemId && l.Spearfishing) ||
+            (data.Fish.TryGetValue(itemId, out var condition) && !string.IsNullOrEmpty(condition.Gig)))
+            return ["Method: Spearfishing - no bait required."];
+        if (spotId == 0) return [];
+        if (!data.SpotBaits.TryGetValue(itemId, out var spots) || !spots.TryGetValue(spotId, out var entry))
+            return ["Baits for this fishing hole: unknown."];
+        bool IsFish(uint id) => data.Info.ContainsKey(id) || data.Fish.ContainsKey(id);
+        var direct = entry.Recommended.Concat(entry.Observed).Distinct().Where(id => !IsFish(id)).ToArray();
+        var mooch = entry.Recommended.Concat(entry.Observed).Distinct().Where(IsFish).ToArray();
+        var recommended = direct.Where(entry.Recommended.Contains).ToArray();
+        var reported = direct.Where(id => !entry.Recommended.Contains(id)).ToArray();
+        if (recommended.Length > 0) lines.Add($"Bait: {string.Join(" / ", recommended.Select(ItemName))}");
+        if (reported.Length > 0) lines.Add($"Other reported baits: {string.Join(" / ", reported.Select(ItemName))}");
+        if (mooch.Length > 0) {
+            lines.Add($"Mooch from: {string.Join(" / ", mooch.Select(ItemName))}");
+            foreach (var id in mooch) AppendMooch(id, spotId, new HashSet<uint> { itemId }, 1, lines);
+        }
+        if (direct.Length == 0 && mooch.Length == 0) lines.Add("Baits for this fishing hole: unknown.");
+        if (entry.MinimumGathering > 0) lines.Add($"Minimum gathering: {entry.MinimumGathering}");
+
+        return lines;
+    }
+
+    private void AppendMooch(uint fish, uint spot, HashSet<uint> visited, int depth, List<string> lines)
+    {
+        if (depth > 4 || !visited.Add(fish)) return;
+        if (!data.SpotBaits.TryGetValue(fish, out var spots) || !spots.TryGetValue(spot, out var entry)) {
+            lines.Add($"To catch {ItemName(fish)} here: requirements unknown."); return;
+        }
+        var baits = entry.Recommended.Concat(entry.Observed).Distinct().ToArray();
+        lines.Add($"To catch {ItemName(fish)} here: {string.Join(" / ", baits.Select(ItemName))}");
+        foreach (var bait in baits.Where(id => data.Info.ContainsKey(id) || data.Fish.ContainsKey(id)))
+            AppendMooch(bait, spot, new HashSet<uint>(visited), depth + 1, lines);
     }
 
     private string ItemName(uint id) => DataManager.GetExcelSheet<ItemSheet>().TryGetRow(id, out var item) ? item.Name.ToString() : data.Items.GetValueOrDefault(id, $"Item #{id}");
     private string FormatWeather(List<uint> ids, string fallback) => ids.Count == 0 ? fallback : string.Join(" / ", ids.Select(id => data.Weather.GetValueOrDefault(id, $"Weather #{id}")));
     private static string FormatTime(double start, double end)
     {
-        if (start == 0 && end == 24) return "Any time";
+        if (start == 0 && end == 24) return "No special requirement (any time)";
         int startMinutes = (int)Math.Round(start * 60) % 1440;
         int endMinutes = (int)Math.Round(end * 60) % 1440;
-        return $"{startMinutes / 60:00}:{startMinutes % 60:00}–{endMinutes / 60:00}:{endMinutes % 60:00} ET";
+        return $"{startMinutes / 60:00}:{startMinutes % 60:00}-{endMinutes / 60:00}:{endMinutes % 60:00} ET";
     }
     private static string FormatHook(FishCondition condition)
     {
         string marks = condition.Tug?.ToLowerInvariant() switch { "light" => "!", "medium" => "!!", "heavy" or "legendary" => "!!!", _ => "Unknown bite" };
-        return string.IsNullOrWhiteSpace(condition.Hookset) ? marks : $"{marks} — {condition.Hookset} Hookset";
+        return string.IsNullOrWhiteSpace(condition.Hookset) ? marks : $"{marks} - {condition.Hookset} Hookset";
     }
 
     private unsafe static bool IsNameVisibleInFishingLog(AtkUnitBase* addon, string itemName) => addon != null && FindVisibleText(&addon->UldManager, itemName, 0);

@@ -12,6 +12,7 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
     private float target;
     private long started;
     private bool ready;
+    public bool RestoreExpandedOnNextTick { get; set; }
     public void InitializeAnimation()
     {
         progress = target = IsCollapsed ? 0 : 1;
@@ -23,6 +24,12 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
     public bool Tick()
     {
         if (!ready) return false;
+        if (RestoreExpandedOnNextTick) {
+            RestoreExpandedOnNextTick = false;
+            IsCollapsed = false;
+            RecalculateLayout();
+            return true;
+        }
         float next = IsCollapsed ? 0 : 1;
         if (next != target)
         {
@@ -42,13 +49,18 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
         if (!ready) { base.OnRecalculateLayout(); return; }
         float fullHeight = 28 + FirstItemSpacing;
         foreach (var node in Nodes) fullHeight += node.Height + ItemSpacing;
-        float visibleHeight = 28 + (fullHeight - 28) * progress;
+        // Reserve the space first, then fade in; reverse this on close. This
+        // animates even one-row sections without clipping or overlapping rows.
+        float layoutProgress = Math.Min(1, progress * 2);
+        float opacity = Math.Max(0, progress * 2 - 1);
+        float visibleHeight = 28 + (fullHeight - 28) * layoutProgress;
         float y = 28 + FirstItemSpacing;
         foreach (var node in Nodes)
         {
             node.Y = y;
-            // Reveal only complete rows; never clip text or affect sibling panes.
-            node.IsVisible = progress > 0 && y + node.Height <= visibleHeight;
+            // Fade only when the full row area has been reserved.
+            node.IsVisible = opacity > 0;
+            node.Alpha = opacity;
             if (FitWidth) node.Width = Width;
             y += node.Height + ItemSpacing;
         }

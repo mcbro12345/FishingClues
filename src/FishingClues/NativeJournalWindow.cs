@@ -20,7 +20,10 @@ public sealed class NativeJournalSessionState
     public uint SelectedFish { get; set; }
     public float RegionScroll, AreaScroll, FishScroll, DetailsScroll;
     public HashSet<string> ExpandedAreas { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, RegionViewState> Regions { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
+
+public sealed record RegionViewState(uint Spot, uint Fish, float AreaScroll, float FishScroll, float DetailsScroll);
 
 public sealed class NativeJournalWindow(
     IReadOnlyList<JournalRegion> regions,
@@ -33,10 +36,11 @@ public sealed class NativeJournalWindow(
     Action openNormalLog,
     Configuration configuration,
     Func<JournalFish, FishClueSection> buildDetails,
-    string journalButtonPath,
     Action<Exception> reportSetupError,
     Action saveDivider,
-    IAddonEventManager addonEvents) : NativeAddon
+    IAddonEventManager addonEvents,
+    Action? openGuide = null,
+    IReadOnlyList<JournalFish>? guideFish = null, Func<JournalFish, GuideDetails>? guideDetails = null) : NativeAddon
 {
     private const float HeaderHeight = 28.0f;
     private const float FishSummaryHeight = 61.0f;
@@ -69,6 +73,26 @@ public sealed class NativeJournalWindow(
     private VerticalLineNode? regionDivider;
     private VerticalLineNode? fishDivider;
     private ButtonBase? normalLogButton;
+    private TextureButtonNode? guideButton;
+    private TextInputNode? searchInput;
+    private string searchText = "";
+    private uint requestedSearchItem;
+    public void SubmitSearch(string query, uint itemId = 0)
+    {
+        requestedSearchItem = itemId;
+        searchText = query;
+        if (searchInput is not null) searchInput.String = query;
+        searchPending = true;
+    }
+    private TextButtonNode? searchButton;
+    private bool searchPending;
+    private GuideDetails? selectedGuide;
+    private GuideLocation? guideLocation;
+    private FishingPole? guidePole;
+    private IReadOnlyList<FishingPole> guidePoles = Array.Empty<FishingPole>();
+    private bool guideDetailsPending;
+    private bool guideLocationPending;
+    private bool GuideMode => guideFish is not null;
     private JournalRegion? selectedRegion;
     private JournalSpot? selectedSpot;
     private Vector2 contentOrigin;
@@ -95,7 +119,7 @@ public sealed class NativeJournalWindow(
         summaryDivider = new HorizontalLineNode { Height = 7.0f };
         summaryDivider.AttachNode(this);
 
-        float regionListHeight = ContentSize.Y - HeaderHeight - (showNormalLogButton ? 48.0f : 0.0f);
+        float regionListHeight = ContentSize.Y - HeaderHeight - (showNormalLogButton || openGuide is not null ? 48.0f : 0.0f);
         regionList = CreateList(contentOrigin + new Vector2(0, HeaderHeight), new Vector2(regionWidth, regionListHeight));
         areaList = CreateList(contentOrigin + new Vector2(regionWidth + ColumnGap, HeaderHeight), new Vector2(areaWidth, ContentSize.Y - HeaderHeight));
         areaList.ContentNode.FitWidth = false;
@@ -144,18 +168,40 @@ public sealed class NativeJournalWindow(
 
         LayoutAttachedNodes();
 
-        if (regions.Count > 0)
+        if (!GuideMode && regions.Count > 0)
         {
             JournalRegion initialRegion = regions.FirstOrDefault(region => region.Name == sessionState.SelectedRegion) ?? regions[0];
             SelectRegion(initialRegion, true);
         }
-        InitializeJournalButton();
+        if (!GuideMode) InitializeJournalButton();
+        else
+        {
+            searchInput = new TextInputNode {
+                Size = new Vector2(Math.Max(200, ContentSize.X), 28),
+                PlaceholderString = "Search all fish...", MaxCharacters = 100,
+                OnInputComplete = text => { searchText = text.ToString(); searchPending = true; }
+            };
+            searchInput.AttachNode(this);
+            searchButton = new TextButtonNode {
+                String = "Search", Size = new Vector2(80, 28),
+                OnClick = () => { searchText = searchInput.String.ToString(); searchPending = true; }
+            };
+            searchButton.AttachNode(this);
+            ShowSearchPrompt();
+            LayoutAttachedNodes();
+        }
         var restoredFish = selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == sessionState.SelectedFish);
         if (restoredFish is not null)
         {
             selectedFish = restoredFish.FishParameterId;
             UpdateFishSelection();
             selectedDetails = buildDetails(restoredFish);
+            if (guideDetails is not null) {
+                selectedGuide = guideDetails(restoredFish);
+                guideLocation = selectedGuide.Locations.FirstOrDefault();
+                guidePoles = guideLocation is null ? Array.Empty<FishingPole>() : selectedGuide.GetPoles(guideLocation);
+                guidePole = guidePoles.FirstOrDefault();
+            }
             RenderDetails();
         }
         RestoreScroll(regionList, sessionState.RegionScroll);
@@ -171,18 +217,54 @@ public sealed class NativeJournalWindow(
             ? Math.Clamp(position, 0, Math.Max(0, list.ScrollBarNode.ScrollMaxPosition)) : 0;
     }
 
+    private void ShowSearchPrompt()
+    {
+        if (fishList is null) return;
+        var favorites = guideFish?.Where(f => configuration.FavoriteFishItemIds.Contains(f.ItemId)).ToArray() ?? Array.Empty<JournalFish>();
+        if (favorites.Length > 0) AddFishGroup("FAVORITES", favorites, true);
+        else fishList.ContentNode.AddNode(new LabelTextNode {
+            Height = 48, FontSize = 14, Width = Math.Max(80, fishList.Width - 24),
+            TextFlags = TextFlags.WordWrap | TextFlags.MultiLine,
+            String = "No favorites yet. Search for a fish and click its star to save it."
+        });
+        fishList.RecalculateSizes();
+    }
+
+    private void RefreshSearch()
+    {
+        if (fishList is null || guideFish is null) return;
+        ClearDetails();
+        fishButtons.Clear();
+        fishList.ContentNode.Clear();
+        if (string.IsNullOrWhiteSpace(searchText)) {
+            ShowSearchPrompt(); fishList.ScrollToStart(); return;
+        }
+        var matches = guideFish.Where(f => f.Name.Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+        AddFishGroup($"FISH - {matches.Length} matches", matches, true);
+        fishList.RecalculateSizes();
+        fishList.ScrollToStart();
+        if (requestedSearchItem != 0) {
+            var match = matches.FirstOrDefault(f => f.ItemId == requestedSearchItem);
+            requestedSearchItem = 0;
+            if (match is not null) {
+                var row = fishButtons.FirstOrDefault(p => p.Value == match.FishParameterId).Key;
+                row?.OnClick?.Invoke();
+                if (row is not null) fishList.ScrollBarNode.ScrollPosition = Math.Max(0, row.Y);
+            }
+        }
+    }
+
+    // Anchor to the outer frame, not the padded content area's old footer.
+    private Vector2 FooterPosition => new(22, Size.Y - 56);
+
     private void InitializeJournalButton()
     {
         try
         {
-            normalLogButton = File.Exists(journalButtonPath)
-                ? new TextureButtonNode
-                {
-                    TexturePath = journalButtonPath,
-                    TextureCoordinates = new Vector2(16, 22),
-                    TextureSize = new Vector2(26, 26),
-                }
-                : new TextButtonNode { String = "Log" };
+            normalLogButton = new TextureButtonNode {
+                TexturePath = "ui/uld/FishingNoteBook.tex",
+                TextureCoordinates = new Vector2(60, 0), TextureSize = new Vector2(28, 28),
+            };
             AttachJournalButton();
         }
         catch (Exception ex)
@@ -231,25 +313,42 @@ public sealed class NativeJournalWindow(
     private void AttachJournalButton()
     {
         if (normalLogButton is null) return;
-        normalLogButton.Position = contentOrigin + new Vector2(0.0f, ContentSize.Y - 44.0f);
+        normalLogButton.Position = FooterPosition;
         normalLogButton.Size = new Vector2(28.0f, 28.0f);
         normalLogButton.IsVisible = showNormalLogButton;
         normalLogButton.IsEnabled = true;
         normalLogButton.TextTooltip = "Open the normal Fishing Log";
         normalLogButton.OnClick = openNormalLog;
         normalLogButton.AttachNode(this);
+        if (openGuide is not null && guideButton is null)
+        {
+            guideButton = new TextureButtonNode {
+                Position = FooterPosition + new Vector2(34, 0), Size = new Vector2(28, 28),
+                TexturePath = "ui/uld/FishingNoteBook.tex",
+                TextureCoordinates = new Vector2(88, 0), TextureSize = new Vector2(28, 28),
+                TextTooltip = "Search all fish", OnClick = openGuide,
+            };
+            guideButton.AttachNode(this);
+        }
     }
 
     private void SelectRegion(JournalRegion region, bool restoring = false)
     {
+        if (!restoring && selectedRegion is not null) SaveViewState();
+        sessionState.Regions.TryGetValue(region.Name, out var remembered);
+        if (remembered is not null) {
+            sessionState.SelectedSpot = remembered.Spot;
+            sessionState.SelectedFish = remembered.Fish;
+        } else if (!restoring) {
+            sessionState.SelectedSpot = 0;
+            sessionState.SelectedFish = 0;
+        }
         selectedRegion = region;
         foreach (var pair in regionButtons) pair.Key.Selected = ReferenceEquals(pair.Value, region);
         selectedSpot = null;
         if (spotTitle is not null) spotTitle.String = "Select a fishing hole.";
         if (spotSummary is not null) spotSummary.String = "";
         ClearDetails();
-        if (!restoring && !string.Equals(sessionState.SelectedRegion, region.Name, StringComparison.OrdinalIgnoreCase))
-            sessionState.SelectedSpot = 0;
         sessionState.SelectedRegion = region.Name;
         if (areaList is null || fishList is null)
             return;
@@ -268,26 +367,23 @@ public sealed class NativeJournalWindow(
                 FitWidth = true,
                 ItemSpacing = 2.0f,
                 FirstItemSpacing = 1.0f,
-                IsCollapsed = !sessionState.ExpandedAreas.Contains(areaKey),
+                IsCollapsed = !sessionState.ExpandedAreas.Contains(areaKey) && !area.Spots.Any(s => s.Id == sessionState.SelectedSpot),
             };
             areaDropDown.OnToggle = expanded =>
             {
+                if (!expanded && selectedSpot is not null && area.Spots.Any(s => s.Id == selectedSpot.Id)) {
+                    areaDropDown.RestoreExpandedOnNextTick = true;
+                    return;
+                }
                 if (expanded)
                 {
-                    foreach (CollapsingHeaderNode other in areaHeaders)
-                    {
-                        if (!ReferenceEquals(other, areaDropDown))
-                            other.IsCollapsed = true;
-                    }
-                    foreach (string key in sessionState.ExpandedAreas
-                                 .Where(key => key.StartsWith($"{region.Name}\n", StringComparison.OrdinalIgnoreCase)).ToArray())
-                        sessionState.ExpandedAreas.Remove(key);
                     sessionState.ExpandedAreas.Add(areaKey);
                 }
                 else
                 {
                     sessionState.ExpandedAreas.Remove(areaKey);
                 }
+                foreach (var header in areaHeaders.OfType<AnimatedAreaHeaderNode>()) header.RecalculateLayout();
                 areaList?.RecalculateSizes();
             };
             areaHeaders.Add(areaDropDown);
@@ -325,8 +421,16 @@ public sealed class NativeJournalWindow(
 
         JournalSpot? restoredSpot = region.Areas.SelectMany(a => a.Spots)
             .FirstOrDefault(spot => spot.IsUnlocked && spot.Id == sessionState.SelectedSpot);
-        if (restoredSpot is not null)
+        if (restoredSpot is not null) {
             SelectSpot(restoredSpot);
+            var restoredRow = fishButtons.FirstOrDefault(p => p.Value == sessionState.SelectedFish).Key;
+            restoredRow?.OnClick?.Invoke();
+        }
+        if (remembered is not null) {
+            RestoreScroll(areaList, remembered.AreaScroll);
+            RestoreScroll(fishList, remembered.FishScroll);
+            if (detailsList is not null) RestoreScroll(detailsList, remembered.DetailsScroll);
+        }
     }
 
     public void ApplyLayout(float windowWidth, float windowHeight, float regionWidth, float areaWidth, float dropdownWidth,
@@ -352,10 +456,18 @@ public sealed class NativeJournalWindow(
         if (selectedSpot is not null && renderedUncaughtFirst != configuration.UncaughtFishFirst)
         {
             var details = selectedDetails;
+            var guide = selectedGuide;
+            var location = guideLocation;
+            var pole = guidePole;
+            var poles = guidePoles;
             uint fish = selectedFish;
             float detailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
             SelectSpot(selectedSpot);
             selectedDetails = details;
+            selectedGuide = guide;
+            guideLocation = location;
+            guidePole = pole;
+            guidePoles = poles;
             selectedFish = fish;
             UpdateFishSelection();
             RenderDetails();
@@ -366,9 +478,9 @@ public sealed class NativeJournalWindow(
         float regionWidth = Math.Clamp(regionWidthSetting, 130.0f, 280.0f);
         float maximumAreaWidth = Math.Max(240.0f, ContentSize.X - regionWidth - 380.0f);
         float areaWidth = Math.Clamp(areaWidthSetting, 240.0f, Math.Min(500.0f, maximumAreaWidth));
-        float fishX = regionWidth + areaWidth + ColumnGap * 2.0f;
+        float fishX = GuideMode ? 0 : regionWidth + areaWidth + ColumnGap * 2.0f;
         float listHeight = Math.Max(100.0f, ContentSize.Y - HeaderHeight);
-        float regionListHeight = Math.Max(100.0f, listHeight - (showNormalLogButton ? 48.0f : 0.0f));
+        float regionListHeight = Math.Max(100.0f, listHeight - (showNormalLogButton || openGuide is not null ? 48.0f : 0.0f));
         float fishWidth = Math.Max(100.0f, ContentSize.X - fishX);
 
         SetHeaderLayout(regionHeader, 0.0f, regionWidth);
@@ -394,8 +506,20 @@ public sealed class NativeJournalWindow(
             summaryDivider.Position = contentOrigin + new Vector2(fishX, HeaderHeight + 52);
             summaryDivider.Width = fishWidth - 10;
         }
-        float fishBodyHeight = listHeight - FishSummaryHeight;
-        fishList.Position = contentOrigin + new Vector2(fishX, HeaderHeight + FishSummaryHeight);
+        regionList.IsVisible = areaList.IsVisible = !GuideMode;
+        if (regionHeader is not null) regionHeader.IsVisible = !GuideMode;
+        if (areaHeader is not null) areaHeader.IsVisible = !GuideMode;
+        if (fishHeader is not null) fishHeader.IsVisible = !GuideMode;
+        if (spotTitle is not null) spotTitle.IsVisible = !GuideMode;
+        if (spotSummary is not null) spotSummary.IsVisible = !GuideMode;
+        if (summaryDivider is not null) summaryDivider.IsVisible = !GuideMode;
+        if (searchInput is not null) {
+            searchInput.Position = contentOrigin;
+            searchInput.Width = Math.Max(100, fishWidth - 90);
+            if (searchButton is not null) searchButton.Position = contentOrigin + new Vector2(fishWidth - 80, 0);
+        }
+        float fishBodyHeight = listHeight - (GuideMode ? 8 : FishSummaryHeight);
+        fishList.Position = contentOrigin + new Vector2(fishX, HeaderHeight + (GuideMode ? 8 : FishSummaryHeight));
         fishList.Size = new Vector2(fishWidth, fishBodyHeight);
         if (detailsList is not null && detailsDivider is not null)
         {
@@ -443,8 +567,15 @@ public sealed class NativeJournalWindow(
         }
         if (normalLogButton is not null)
         {
-            normalLogButton.Position = contentOrigin + new Vector2(0.0f, ContentSize.Y - 44.0f);
+            normalLogButton.Position = FooterPosition;
             normalLogButton.IsVisible = showNormalLogButton;
+        }
+        if (guideButton is not null) guideButton.Position = FooterPosition + new Vector2(34, 0);
+        if (GuideMode) {
+            if (regionDivider is not null) regionDivider.IsVisible = false;
+            if (fishDivider is not null) fishDivider.IsVisible = false;
+            if (regionDividerHandle is not null) regionDividerHandle.IsVisible = false;
+            if (areaDividerHandle is not null) areaDividerHandle.IsVisible = false;
         }
         ApplyAreaDropdownWidths();
         regionList.RecalculateSizes();
@@ -480,6 +611,7 @@ public sealed class NativeJournalWindow(
         foreach (var pair in spotButtons) pair.Key.Selected = pair.Value == spot.Id;
         sessionState.SelectedRegion = selectedRegion?.Name;
         sessionState.SelectedSpot = spot.Id;
+        if (selectedRegion is not null) sessionState.ExpandedAreas.Add($"{selectedRegion.Name}\n{spot.Area}");
         if (fishList is null)
             return;
 
@@ -487,7 +619,7 @@ public sealed class NativeJournalWindow(
         fishList.ContentNode.Clear();
         if (spotTitle is not null) spotTitle.String = spot.Name;
         if (spotSummary is not null)
-            spotSummary.String = $"Caught {spot.CaughtCount}/{spot.Fish.Count}   •   {spot.MissingCount} remaining";
+            spotSummary.String = $"Caught {spot.CaughtCount}/{spot.Fish.Count}    |    {spot.MissingCount} remaining";
         IReadOnlyList<JournalFish> caught = spot.Fish.Where(f => f.IsCaught).ToArray();
         IReadOnlyList<JournalFish> missing = spot.Fish.Where(f => !f.IsCaught).ToArray();
         renderedUncaughtFirst = configuration.UncaughtFishFirst;
@@ -521,7 +653,7 @@ public sealed class NativeJournalWindow(
         for (int i = 0; i < fish.Count; i++)
         {
             JournalFish entry = fish[i];
-            string label = revealNames ? entry.Name : $"???? #{i + 1}";
+            string label = revealNames || entry.IdentityVisible ? entry.Name : $"???? #{i + 1}";
             string rowLabel = entry.Level > 0 ? $"{label}   Lv. {entry.Level}" : label;
             var row = new FishEntryRowNode(entry, rowLabel, () =>
             {
@@ -529,10 +661,24 @@ public sealed class NativeJournalWindow(
                 UpdateFishSelection();
                 if (!configuration.EmbedFishDetails) { openFish(entry); return; }
                 selectedDetails = buildDetails(entry);
+                if (guideDetails is not null) {
+                    selectedGuide = guideDetails(entry);
+                    guideLocation = selectedGuide.Locations.FirstOrDefault();
+                    guidePoles = guideLocation is null ? Array.Empty<FishingPole>() : selectedGuide.GetPoles(guideLocation);
+                    guidePole = guidePoles.FirstOrDefault();
+                }
                 RenderDetails();
                 detailsList?.ScrollToStart();
             });
             fishButtons.Add(row, entry.FishParameterId);
+            if (GuideMode) row.AddFavoriteStar(configuration.FavoriteFishItemIds.Contains(entry.ItemId), () => {
+                bool favorite = configuration.FavoriteFishItemIds.Add(entry.ItemId);
+                if (!favorite) configuration.FavoriteFishItemIds.Remove(entry.ItemId);
+                saveDivider();
+                // Defer removals from the empty-query list until the click callback finishes.
+                if (string.IsNullOrWhiteSpace(searchText)) searchPending = true;
+                return favorite;
+            });
             fishList.ContentNode.AddNode(row);
         }
     }
@@ -559,24 +705,77 @@ public sealed class NativeJournalWindow(
 
     private void ClearDetails()
     {
+        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HideTooltip();
+        partialHover = null;
+        catchBody = null;
+        poleSelector = null;
+        writingCatchBody = false;
         selectedDetails = null;
+        selectedGuide = null;
+        guideLocation = null;
+        guidePole = null;
+        guideDetailsPending = guideLocationPending = false;
         selectedFish = 0;
         detailsList?.ContentNode.Clear();
         detailsList?.RecalculateSizes();
         UpdateDetailsHint();
     }
 
+    private JournalListNode? catchBody;
+    private DetailSelectorRow<FishingPole>? poleSelector;
+    private bool writingCatchBody;
+
     private void RenderDetails()
     {
         if (detailsList is null) return;
+        catchBody = null;
+        poleSelector = null;
         detailsList.ContentNode.Clear();
-        if (selectedDetails is { } section)
+        if (selectedGuide is not null) {
+            RenderGuideDetails();
+        }
+        else if (selectedDetails is { } section)
         {
             AddDetailLine(section.Heading);
             foreach (string line in section.Lines) AddDetailLine(line);
         }
         detailsList.RecalculateSizes();
         UpdateDetailsHint();
+    }
+
+    private void RenderGuideDetails()
+    {
+        if (detailsList is null || selectedGuide is null) return;
+        AddDetailLine(selectedGuide.Name);
+        if (GuideMode) detailsList.ContentNode.AddNode(new DetailSelectorRow<GuideLocation>(
+            "Locations:", selectedGuide.Locations, guideLocation, l => l.Label,
+            l => { guideLocation = l; guideLocationPending = guideDetailsPending = true; }, "Unknown") { Width = Math.Max(80, detailsList.Width - 24) });
+        poleSelector = new DetailSelectorRow<FishingPole>(
+            "Fishing Pole:", guidePoles, guidePole, p => p.Label,
+            p => { guidePole = p; guideDetailsPending = true; },
+            guideLocation?.Spearfishing == true ? "Not used (spearfishing)" : "No eligible poles") { Width = Math.Max(80, detailsList.Width - 24) };
+        detailsList.ContentNode.AddNode(poleSelector);
+        catchBody = new JournalListNode { Width = Math.Max(80, detailsList.Width - 24), FitContents = true };
+        detailsList.ContentNode.AddNode(catchBody);
+        RenderCatchBody();
+    }
+
+    private void RenderCatchBody()
+    {
+        if (catchBody is null || selectedGuide is null) return;
+        catchBody.Clear();
+        writingCatchBody = true;
+        if (guideLocation is not null)
+            foreach (string line in selectedGuide.GetDetails(guideLocation, guidePole)) AddDetailLine(line);
+        else AddDetailLine("Location requirements unknown.");
+        if (selectedGuide.Info.Count > 0) {
+            AddDetailLine("");
+            AddDetailLine("Description:");
+            foreach (string line in selectedGuide.Info) AddDetailLine(line);
+        }
+        writingCatchBody = false;
+        catchBody.RecalculateLayout();
+        detailsList?.RecalculateSizes();
     }
 
     private void ReflowDetails()
@@ -588,6 +787,18 @@ public sealed class NativeJournalWindow(
             if (Math.Abs(label.Width - width) < 1) continue;
             label.Width = width;
             label.Height = Math.Max(24.0f, label.GetTextDrawSize(false).Y + 6.0f);
+        }
+        foreach (var row in detailsList.ContentNode.GetNodes<ItemDetailRow>()) row.Width = width;
+        foreach (var row in detailsList.ContentNode.GetNodes<DetailSelectorRow<GuideLocation>>()) row.Width = width;
+        foreach (var row in detailsList.ContentNode.GetNodes<DetailSelectorRow<FishingPole>>()) row.Width = width;
+        if (catchBody is not null && Math.Abs(catchBody.Width - width) >= 1) {
+            catchBody.Width = width;
+            foreach (var label in catchBody.GetNodes<LabelTextNode>()) {
+                label.Width = width;
+                label.Height = Math.Max(24, label.GetTextDrawSize(false).Y + 6);
+            }
+            foreach (var row in catchBody.GetNodes<ItemDetailRow>()) row.Width = width;
+            catchBody.RecalculateLayout();
         }
         detailsList.RecalculateSizes();
         UpdateDetailsHint();
@@ -604,6 +815,10 @@ public sealed class NativeJournalWindow(
     private void AddDetailLine(string text)
     {
         if (detailsList is null) return;
+        if (selectedGuide is not null && (text.Contains(":") && !selectedGuide.Info.Contains(text) || selectedGuide.ItemLinks.ContainsKey(text))) {
+            (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(new ItemDetailRow(text, selectedGuide.ItemLinks) { Width = Math.Max(80, detailsList.Width - 24) });
+            return;
+        }
         var label = new LabelTextNode
         {
             Width = Math.Max(80.0f, detailsList.Width - 24.0f),
@@ -612,7 +827,7 @@ public sealed class NativeJournalWindow(
             String = text,
         };
         label.Height = Math.Max(24.0f, label.GetTextDrawSize(false).Y + 6.0f);
-        detailsList.ContentNode.AddNode(label);
+        (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(label);
     }
 
     private CategoryTextNode AddHeader(string text, float x, float width)
@@ -655,8 +870,28 @@ public sealed class NativeJournalWindow(
         line.Height = ContentSize.Y;
     }
 
+    private FishEntryRowNode? partialHover;
     protected override unsafe void OnDraw(AtkUnitBase* addon)
     {
+        var previousPartialHover = partialHover;
+        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HoverBackgroundNode.Alpha = 0;
+        partialHover = null;
+        if (guideDetailsPending && selectedGuide is not null && guideLocation is not null) {
+            guideDetailsPending = false;
+            if (guideLocationPending) {
+                guideLocationPending = false;
+                guidePoles = selectedGuide.GetPoles(guideLocation);
+                guidePole = guidePoles.FirstOrDefault();
+                poleSelector?.SetOptions(guidePoles, guidePole);
+            }
+            // Preserve dropdown nodes: the native input system can retain their focus pointers.
+            // Only rebuild the noninteractive catch text after selection.
+            RenderCatchBody();
+        }
+        if (searchPending) {
+            searchPending = false;
+            RefreshSearch();
+        }
         var framework = Framework.Instance();
         var mouse = framework == null ? default : framework->CursorInputs;
         var stage = AtkStage.Instance();
@@ -679,8 +914,7 @@ public sealed class NativeJournalWindow(
         }
         else ReleaseResizeCursor();
         if (!draggingDivider && fishList is not null && stage != null
-            && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon
-            && (mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0)
+            && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon)
         {
             // Native buttons reject clicks when only part of their bounds is
             // clipped. Permit the visible portion, never the hidden portion.
@@ -698,11 +932,19 @@ public sealed class NativeJournalWindow(
                     bool partial = top < 0 || bottom > fishList.Height;
                     if (partial && y >= Math.Max(0, top) && y < Math.Min(fishList.Height, bottom))
                     {
-                        row.OnClick?.Invoke();
+                        row.HoverBackgroundNode.Alpha = 1;
+                        partialHover = row;
+                        addonEvents.SetCursor(AddonCursorType.Clickable);
+                        ownsResizeCursor = true;
+                        if ((mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0) row.OnClick?.Invoke();
                         break;
                     }
                 }
             }
+        }
+        if (!ReferenceEquals(previousPartialHover, partialHover)) {
+            if (previousPartialHover is not null && fishButtons.ContainsKey(previousPartialHover)) previousPartialHover.HideTooltip();
+            partialHover?.ShowTooltip();
         }
         // Use the game's mouse state, not ImGui's filtered input for a native window.
         // Scope hit testing to this addon so other windows cannot trigger a drag.
@@ -752,19 +994,22 @@ public sealed class NativeJournalWindow(
         {
             foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
                 animating |= header.Tick();
-            if (animating) areaList.RecalculateSizes();
-        }
-        // The asynchronously loaded PNG contains the user's button reference.
-        // Select only its button rectangle, not the surrounding screenshot.
-        if (normalLogButton is TextureButtonNode button)
-        {
-            button.TextureCoordinates = new Vector2(16, 22);
-            button.TextureSize = new Vector2(26, 26);
+            float previousHeight = areaList.ContentNode.Height;
+            // Collapse callbacks can change a header height without an animation tick.
+            // Always reconcile sibling positions before refreshing the scroll range.
+            areaList.ContentNode.RecalculateLayout();
+            if (animating || previousHeight != areaList.ContentNode.Height)
+            {
+                areaList.RecalculateSizes();
+
+            }
         }
     }
 
     protected override unsafe void OnFinalize(AtkUnitBase* addon)
     {
+        catchBody = null;
+        poleSelector = null;
         ReleaseResizeCursor();
         SaveViewState();
         base.OnFinalize(addon);
@@ -781,6 +1026,11 @@ public sealed class NativeJournalWindow(
         spotButtons.Clear();
         fishButtons.Clear();
         selectedDetails = null;
+        selectedGuide = null;
+        guideLocation = null;
+        guidePole = null;
+        guidePoles = Array.Empty<FishingPole>();
+        guideDetailsPending = guideLocationPending = false;
         regionHeader = null;
         areaHeader = null;
         fishHeader = null;
@@ -790,10 +1040,16 @@ public sealed class NativeJournalWindow(
         regionDivider = null;
         fishDivider = null;
         normalLogButton = null;
+        guideButton = null;
+        searchInput = null;
+        searchButton = null;
+        searchPending = false;
     }
 
     protected override unsafe void OnHide(AtkUnitBase* addon)
     {
+        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HideTooltip();
+        partialHover = null;
         ReleaseResizeCursor();
         if (draggingDivider) { draggingDivider = false; saveDivider(); }
         SaveViewState();
@@ -814,5 +1070,8 @@ public sealed class NativeJournalWindow(
         sessionState.AreaScroll = areaList?.ScrollBarNode.ScrollPosition ?? 0;
         sessionState.FishScroll = fishList.ScrollBarNode.ScrollPosition;
         sessionState.DetailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
+        if (!GuideMode && selectedRegion is not null)
+            sessionState.Regions[selectedRegion.Name] = new RegionViewState(selectedSpot?.Id ?? 0, selectedFish,
+                sessionState.AreaScroll, sessionState.FishScroll, sessionState.DetailsScroll);
     }
 }

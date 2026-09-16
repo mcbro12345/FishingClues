@@ -35,6 +35,7 @@ Fishing Clues wouldn't exist without these open-source projects:
 - [FFXIV Fish Tracker App](https://ff14fish.carbuncleplushy.com/) by icykoneko and contributors - MIT
 - [KamiToolKit](https://github.com/MidoriKami/KamiToolKit) by MidoriKami - MIT
 - [GatherBuddy](https://github.com/Ottermandias/GatherBuddy) by Ottermandias and contributors - Apache-2.0
+- [Teamcraft](https://ffxivteamcraft.com) by Flavien Normand and contributors - MIT
 
 Full details in `THIRD_PARTY_NOTICES.md`.
 

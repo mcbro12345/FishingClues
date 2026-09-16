@@ -13,5 +13,9 @@ Ordinary-fish catch requirements, plus the live fishing-hole and caught-status
 approach, are derived from GatherBuddy under the Apache License 2.0:
 https://github.com/Ottermandias/GatherBuddy
 
+Additional fish metadata used by the all-fish guide is derived from
+Teamcraft by Flavien Normand and contributors, used under its MIT license:
+https://ffxivteamcraft.com
+
 Uncaught fish names stay hidden unless the native Fishing Log has already
 revealed the name to the player.

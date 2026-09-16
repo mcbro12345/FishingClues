@@ -10,7 +10,12 @@ public sealed record JournalFish(
     bool IsCaught,
     string Name,
     uint IconId,
-    FishInfo? Info);
+    FishInfo? Info,
+    uint SpotId = 0,
+    bool IsRevealed = false)
+{
+    public bool IdentityVisible => IsCaught || IsRevealed;
+}
 
 public sealed record JournalSpot(
     uint Id,

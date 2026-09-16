@@ -32,6 +32,16 @@ Upstream project: `Ottermandias/GatherBuddy` on GitHub.
 
 License: `vendor/GatherBuddy/LICENSE`.
 
+## Teamcraft
+
+Copyright © 2017 Flavien Normand.
+
+Used under the MIT License. Additional fish metadata used by the all-fish guide is derived from Teamcraft data.
+
+Upstream project: Teamcraft (`ffxivteamcraft.com`).
+
+License: `src/FishingClues/TEAMCRAFT_LICENSE.txt`.
+
 ## Scope of the Fishing Clues license
 
 The root MIT License applies to the Fishing Clues project code authored/generated for this project. It does not replace or override the licenses of third-party files under `vendor/` or third-party material reproduced in bundled notices.

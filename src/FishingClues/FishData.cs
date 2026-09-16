@@ -6,11 +6,30 @@ namespace FishingClues;
 public sealed class FishDataFile
 {
     public int SchemaVersion { get; set; }
+    public List<FishLocation> Locations { get; set; } = new();
+    public Dictionary<uint, Dictionary<uint, SpotBaitInfo>> SpotBaits { get; set; } = new();
     public Dictionary<uint, FishCondition> Fish { get; set; } = new();
     public Dictionary<uint, string> Items { get; set; } = new();
     public Dictionary<uint, string> Weather { get; set; } = new();
     public Dictionary<uint, string> Folklore { get; set; } = new();
     public Dictionary<uint, FishInfo> Info { get; set; } = new();
+}
+
+public sealed class FishLocation
+{
+    public uint ItemId { get; set; }
+    public uint SpotId { get; set; }
+    public uint MapId { get; set; }
+    public uint PlaceId { get; set; }
+    public uint ZoneId { get; set; }
+    public bool Spearfishing { get; set; }
+}
+
+public sealed class SpotBaitInfo
+{
+    public List<uint> Recommended { get; set; } = new();
+    public List<uint> Observed { get; set; } = new();
+    public int MinimumGathering { get; set; }
 }
 
 public sealed class FishInfo
@@ -29,6 +48,8 @@ public sealed class FishInfo
 
 public sealed class FishCondition
 {
+    public bool RequirementsKnown { get; set; }
+    public bool IsMooch { get; set; }
     public List<uint> PreviousWeather { get; set; } = new();
     public List<uint> Weather { get; set; } = new();
     public double StartHour { get; set; }
@@ -44,6 +65,7 @@ public sealed class FishCondition
     public string? Hookset { get; set; }
     public string? Tug { get; set; }
     public string? Gig { get; set; }
+    public string? SpearSpeed { get; set; }
     public object? DataMissing { get; set; }
 }
 

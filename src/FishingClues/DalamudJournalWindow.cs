@@ -151,7 +151,7 @@ public sealed class DalamudJournalWindow(
         else
         {
             ImGui.TextUnformatted(spot.Name);
-            ImGui.TextDisabled($"Caught {spot.CaughtCount}/{spot.Fish.Count}  •  {spot.MissingCount} remaining");
+            ImGui.TextDisabled($"Caught {spot.CaughtCount}/{spot.Fish.Count}   |   {spot.MissingCount} remaining");
         }
         ImGui.Separator();
         float available = ImGui.GetContentRegionAvail().Y;
@@ -213,10 +213,10 @@ public sealed class DalamudJournalWindow(
         for (int i = 0; i < fish.Count; i++)
         {
             JournalFish entry = fish[i];
-            string name = revealNames ? entry.Name : $"???? #{i + 1}";
+            string name = revealNames || entry.IdentityVisible ? entry.Name : $"???? #{i + 1}";
             bool clicked = false;
             ImGui.PushID((int)entry.FishParameterId);
-            if (entry.IsCaught && entry.IconId != 0)
+            if (entry.IdentityVisible && entry.IconId != 0)
             {
                 var wrap = textures.GetFromGameIcon(new GameIconLookup(entry.IconId)).GetWrapOrDefault();
                 if (wrap is not null)
@@ -230,7 +230,7 @@ public sealed class DalamudJournalWindow(
             if (ImGui.IsItemHovered())
             {
                 ImGui.BeginTooltip();
-                ImGui.TextUnformatted(entry.IsCaught ? entry.Name : "Unknown fish");
+                ImGui.TextUnformatted(entry.IdentityVisible ? entry.Name : "Unknown fish");
                 ImGui.EndTooltip();
             }
             ImGui.SameLine();
@@ -238,7 +238,7 @@ public sealed class DalamudJournalWindow(
             if (ImGui.IsItemHovered())
             {
                 ImGui.BeginTooltip();
-                ImGui.TextUnformatted(entry.IsCaught ? entry.Name : "Unknown fish");
+                ImGui.TextUnformatted(entry.IdentityVisible ? entry.Name : "Unknown fish");
                 ImGui.EndTooltip();
             }
             ImGui.PopID();

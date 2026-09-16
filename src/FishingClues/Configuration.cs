@@ -11,6 +11,8 @@ public enum JournalUiMode
 public sealed class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 8;
+    public System.Collections.Generic.HashSet<uint> FavoriteFishItemIds { get; set; } = new();
+    public System.Collections.Generic.Dictionary<ulong, System.Collections.Generic.HashSet<uint>> RevealedFish { get; set; } = new();
     public JournalUiMode UiMode { get; set; } = JournalUiMode.Native;
     public float NativeWindowWidth { get; set; } = 1050.0f;
     public float NativeWindowHeight { get; set; } = 680.0f;
@@ -35,6 +37,8 @@ public sealed class Configuration : IPluginConfiguration
 
     public void ApplySimplifiedJournalSettings()
     {
+        RevealedFish ??= new();
+        FavoriteFishItemIds ??= new();
         if (Version < 8)
         {
             LockRegionDivider = LockAreaDivider = LockDetailsDivider = LockJournalDividers;
