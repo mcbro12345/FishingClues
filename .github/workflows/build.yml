@@ -19,6 +19,14 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Set up Dalamud
+        shell: pwsh
+        run: |
+          $dest = "$env:APPDATA\XIVLauncher\addon\Hooks\dev"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          Invoke-WebRequest -Uri "https://goatcorp.github.io/dalamud-distrib/latest.zip" -OutFile "$env:TEMP\dalamud-latest.zip"
+          Expand-Archive -Path "$env:TEMP\dalamud-latest.zip" -DestinationPath $dest -Force
+
       - name: Restore
         run: dotnet restore src/FishingClues/FishingClues.csproj
 
