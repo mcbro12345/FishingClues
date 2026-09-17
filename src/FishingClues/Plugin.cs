@@ -8,6 +8,11 @@ using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using FishingSpotSheet = Lumina.Excel.Sheets.FishingSpot;
 
+using FishingClues.Base;
+using FishingClues.Game.Data;
+using FishingClues.Game.Logic;
+using FishingClues.UI;
+
 namespace FishingClues;
 
 public sealed class Plugin : IDalamudPlugin, IDisposable
