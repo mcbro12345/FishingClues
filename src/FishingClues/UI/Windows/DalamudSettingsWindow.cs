@@ -13,6 +13,9 @@ namespace FishingClues.UI.Windows;
 public sealed class DalamudSettingsWindow(Configuration configuration, Action save, Action applyNativeLayout, Action openDiagnostics, Action refreshData, Func<bool> refreshBusy, Func<string> refreshStatus, IKeyState keyState, Action refreshJournalContents)
     : Window("Fishing Clues Settings###FishingCluesSettings")
 {
+    private const float DefaultRegionWidth = 162.0f;
+    private const float DefaultAreaWidth = 263.0f;
+
     private bool capturingKeybind;
 
     public override void PreDraw() => SizeConstraints = new WindowSizeConstraints
@@ -58,7 +61,6 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             configuration.DisableAvailabilityCountdown = disableCountdown;
             SaveLayout();
         }
-        DrawWrappedHint("Disables the timer.");
         bool use12Hour = configuration.Use12HourTime;
         if (ImGui.Checkbox("Show times in 12-hour format", ref use12Hour))
         {
@@ -126,28 +128,50 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
                 configuration.LockRegionDivider = !unlockRegionDivider;
                 SaveLayout();
             }
+            if (ImGui.Button("Restore default region width##RegionWidthDefault"))
+            {
+                configuration.NativeRegionWidth = DefaultRegionWidth;
+                SaveLayout();
+            }
             bool unlockAreaDivider = !configuration.LockAreaDivider;
             if (ImGui.Checkbox("Unlock the area column divider", ref unlockAreaDivider))
             {
                 configuration.LockAreaDivider = !unlockAreaDivider;
                 SaveLayout();
             }
+            if (ImGui.Button("Restore default area width##AreaWidthDefault"))
+            {
+                configuration.NativeAreaWidth = DefaultAreaWidth;
+                SaveLayout();
+            }
             DrawWrappedHint("Lets you drag the region and area column edges directly in the journal, the same way the fish / details divider already works.");
 
             ImGui.Spacing();
+            ImGui.Text("Area dropdown left inset");
             float dropdownLeftInset = configuration.NativeAreaDropdownLeftInset;
-            if (ImGui.SliderFloat("Area dropdown left inset", ref dropdownLeftInset, -150.0f, 150.0f, "%.0f"))
+            if (ImGui.SliderFloat("##AreaDropdownLeftInset", ref dropdownLeftInset, -150.0f, 150.0f, "%.0f"))
             {
                 configuration.NativeAreaDropdownLeftInset = dropdownLeftInset;
                 SaveLayout();
             }
+            if (ImGui.Button("Restore default##AreaDropdownLeftInsetDefault"))
+            {
+                configuration.NativeAreaDropdownLeftInset = 0.0f;
+                SaveLayout();
+            }
+            ImGui.Text("Area dropdown right inset");
             float dropdownRightInset = configuration.NativeAreaDropdownRightInset;
-            if (ImGui.SliderFloat("Area dropdown right inset", ref dropdownRightInset, -150.0f, 150.0f, "%.0f"))
+            if (ImGui.SliderFloat("##AreaDropdownRightInset", ref dropdownRightInset, -150.0f, 150.0f, "%.0f"))
             {
                 configuration.NativeAreaDropdownRightInset = dropdownRightInset;
                 SaveLayout();
             }
-            DrawWrappedHint("0 on both sides fills the area column. Positive shrinks the dropdown box in from that edge; negative extends it past that edge.");
+            if (ImGui.Button("Restore default##AreaDropdownRightInsetDefault"))
+            {
+                configuration.NativeAreaDropdownRightInset = 0.0f;
+                SaveLayout();
+            }
+            DrawWrappedHint("0 on both sides is the recommended layout. Positive shrinks the dropdown box in from that edge; negative extends it past that edge.");
             ImGui.Unindent();
         }
     }
