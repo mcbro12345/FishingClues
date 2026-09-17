@@ -494,19 +494,17 @@ public sealed partial class NativeJournalWindow(
     }
 
     private const float MinDropdownWidth = 80.0f;
+    private const float MaxDropdownInset = 150.0f;
 
-    private float EffectiveLeftInset()
-    {
-        float availableWidth = areaList is null ? areaWidthSetting : areaList.ContentNode.Width;
-        float maxInset = Math.Max(0.0f, availableWidth - 12.0f - MinDropdownWidth - Math.Max(0.0f, dropdownRightInsetSetting));
-        return Math.Clamp(dropdownLeftInsetSetting, 0.0f, maxInset);
-    }
+    // Negative insets let the dropdown box extend past that edge of the area
+    // column instead of only ever shrinking in from it.
+    private float EffectiveLeftInset() => Math.Clamp(dropdownLeftInsetSetting, -MaxDropdownInset, MaxDropdownInset);
+    private float EffectiveRightInset() => Math.Clamp(dropdownRightInsetSetting, -MaxDropdownInset, MaxDropdownInset);
 
     private float EffectiveDropdownWidth()
     {
         float availableWidth = areaList is null ? areaWidthSetting : areaList.ContentNode.Width;
-        float leftInset = EffectiveLeftInset();
-        float usable = availableWidth - 12.0f - leftInset - Math.Max(0.0f, dropdownRightInsetSetting);
+        float usable = availableWidth - 12.0f - EffectiveLeftInset() - EffectiveRightInset();
         return Math.Max(MinDropdownWidth, usable);
     }
 

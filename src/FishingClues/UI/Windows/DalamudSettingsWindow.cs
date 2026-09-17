@@ -136,18 +136,18 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
 
             ImGui.Spacing();
             float dropdownLeftInset = configuration.NativeAreaDropdownLeftInset;
-            if (ImGui.SliderFloat("Area dropdown left inset", ref dropdownLeftInset, 0.0f, 150.0f, "%.0f"))
+            if (ImGui.SliderFloat("Area dropdown left inset", ref dropdownLeftInset, -150.0f, 150.0f, "%.0f"))
             {
                 configuration.NativeAreaDropdownLeftInset = dropdownLeftInset;
                 SaveLayout();
             }
             float dropdownRightInset = configuration.NativeAreaDropdownRightInset;
-            if (ImGui.SliderFloat("Area dropdown right inset", ref dropdownRightInset, 0.0f, 150.0f, "%.0f"))
+            if (ImGui.SliderFloat("Area dropdown right inset", ref dropdownRightInset, -150.0f, 150.0f, "%.0f"))
             {
                 configuration.NativeAreaDropdownRightInset = dropdownRightInset;
                 SaveLayout();
             }
-            DrawWrappedHint("0 on both sides fills the area column. Raise either side to shrink the dropdown box in from that edge.");
+            DrawWrappedHint("0 on both sides fills the area column. Positive shrinks the dropdown box in from that edge; negative extends it past that edge.");
             ImGui.Unindent();
         }
     }
