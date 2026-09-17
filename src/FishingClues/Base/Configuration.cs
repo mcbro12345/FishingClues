@@ -18,8 +18,16 @@ public sealed class Configuration : IPluginConfiguration
     public bool DebugRevealEverything { get; set; }
     public bool UncaughtFishFirst { get; set; } = true;
     public bool LockJournalDividers { get; set; }
-    // only the fish/details divider (kind 0) is user-adjustable; region/area stay locked
-    public bool IsDividerLocked(int kind) => kind != 0 || LockJournalDividers;
+    public bool LockRegionDivider { get; set; } = true;
+    public bool LockAreaDivider { get; set; } = true;
+    public bool DebugMode { get; set; }
+    public bool IsDividerLocked(int kind) => kind switch
+    {
+        0 => LockJournalDividers,
+        1 => LockRegionDivider,
+        2 => LockAreaDivider,
+        _ => true,
+    };
 
     public void ApplySimplifiedJournalSettings()
     {

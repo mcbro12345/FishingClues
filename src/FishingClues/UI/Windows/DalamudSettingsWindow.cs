@@ -101,14 +101,49 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
         ImGui.TextDisabled("DEBUG");
         if (ImGui.Button("Open diagnostic report")) openDiagnostics();
         ImGui.Spacing();
-        bool revealEverything = configuration.DebugRevealEverything;
-        if (ImGui.Checkbox("Show every location and fish as unlocked", ref revealEverything))
+        bool debugMode = configuration.DebugMode;
+        if (ImGui.Checkbox("Debug Mode", ref debugMode))
         {
-            configuration.DebugRevealEverything = revealEverything;
+            configuration.DebugMode = debugMode;
             save();
-            refreshJournalContents();
         }
-        DrawWrappedHint("Testing only. While on, every fishing hole shows as discovered and every fish as caught; turn it off to go back to your real progress.");
+        if (debugMode)
+        {
+            ImGui.Indent();
+            bool revealEverything = configuration.DebugRevealEverything;
+            if (ImGui.Checkbox("Show every location and fish as unlocked", ref revealEverything))
+            {
+                configuration.DebugRevealEverything = revealEverything;
+                save();
+                refreshJournalContents();
+            }
+            DrawWrappedHint("Testing only. While on, every fishing hole shows as discovered and every fish as caught; turn it off to go back to your real progress.");
+
+            ImGui.Spacing();
+            bool unlockRegionDivider = !configuration.LockRegionDivider;
+            if (ImGui.Checkbox("Unlock the region column divider", ref unlockRegionDivider))
+            {
+                configuration.LockRegionDivider = !unlockRegionDivider;
+                SaveLayout();
+            }
+            bool unlockAreaDivider = !configuration.LockAreaDivider;
+            if (ImGui.Checkbox("Unlock the area column divider", ref unlockAreaDivider))
+            {
+                configuration.LockAreaDivider = !unlockAreaDivider;
+                SaveLayout();
+            }
+            DrawWrappedHint("Lets you drag the region and area column edges directly in the journal, the same way the fish / details divider already works.");
+
+            ImGui.Spacing();
+            float dropdownWidth = configuration.NativeAreaDropdownWidth;
+            if (ImGui.SliderFloat("Area dropdown width", ref dropdownWidth, 120.0f, 999.0f, "%.0f"))
+            {
+                configuration.NativeAreaDropdownWidth = dropdownWidth;
+                SaveLayout();
+            }
+            DrawWrappedHint("999 always matches the area column's current width.");
+            ImGui.Unindent();
+        }
     }
 
     private void DrawKeybindCapture()
