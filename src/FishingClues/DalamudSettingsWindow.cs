@@ -8,7 +8,7 @@ using Dalamud.Plugin.Services;
 
 namespace FishingClues;
 
-public sealed class DalamudSettingsWindow(Configuration configuration, Action save, Action applyNativeLayout, Action openDiagnostics, Action refreshData, Func<bool> refreshBusy, Func<string> refreshStatus, IKeyState keyState)
+public sealed class DalamudSettingsWindow(Configuration configuration, Action save, Action applyNativeLayout, Action openDiagnostics, Action refreshData, Func<bool> refreshBusy, Func<string> refreshStatus, IKeyState keyState, Action refreshJournalContents)
     : Window("Fishing Clues Settings###FishingCluesSettings")
 {
     private bool capturingKeybind;
@@ -57,6 +57,13 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             SaveLayout();
         }
         DrawWrappedHint("Disables the timer.");
+        bool use12Hour = configuration.Use12HourTime;
+        if (ImGui.Checkbox("Show times in 12-hour format", ref use12Hour))
+        {
+            configuration.Use12HourTime = use12Hour;
+            SaveLayout();
+        }
+        DrawWrappedHint("Applies to catch time windows everywhere they're shown, not just the countdown.");
         bool uncaughtFirst = configuration.UncaughtFishFirst;
         if (ImGui.Checkbox("Uncaught fish first", ref uncaughtFirst))
         {
@@ -89,6 +96,17 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
         ImGui.TextWrapped("Downloads catch conditions from Fish Tracker and GatherBuddy. New discoveries appear when their maintainers publish them.");
         ImGui.Spacing();
         if (ImGui.Button("Open diagnostic report")) openDiagnostics();
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextDisabled("DEBUG");
+        bool revealEverything = configuration.DebugRevealEverything;
+        if (ImGui.Checkbox("Show every location and fish as unlocked", ref revealEverything))
+        {
+            configuration.DebugRevealEverything = revealEverything;
+            save();
+            refreshJournalContents();
+        }
+        DrawWrappedHint("Testing only. While on, every fishing hole shows as discovered and every fish as caught; turn it off to go back to your real progress.");
     }
 
     private void DrawKeybindCapture()

@@ -11,7 +11,7 @@ public sealed class ItemDetailRow : ResNode
 {
     private readonly List<LabelTextNode> segments = new();
     private bool layingOut;
-    public unsafe ItemDetailRow(string text, IReadOnlyDictionary<string, uint> links)
+    public ItemDetailRow(string text, IReadOnlyDictionary<string, uint> links)
     {
         int prefixLength = text.IndexOf(':') + 1;
         bool first = true;
@@ -42,8 +42,7 @@ public sealed class ItemDetailRow : ResNode
                 node.AddEvent(AtkEventType.MouseOut, () => node.TextColor = normal);
                 uint itemId = match.Value;
                 node.AddEvent(AtkEventType.MouseDown, () => {
-                    var framework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance();
-                    if (framework != null && (framework->CursorInputs.MouseButtonHeldFlags & FFXIVClientStructs.FFXIV.Client.System.Input.MouseButtonFlags.RBUTTON) != 0) Plugin.RequestItemMenu(itemId);
+                    if (NativeMouseInput.IsRightButtonHeld()) Plugin.RequestItemMenu(itemId);
                 });
             }
             node.AttachNode(this);

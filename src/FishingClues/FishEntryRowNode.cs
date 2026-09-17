@@ -54,6 +54,10 @@ public sealed class FishEntryRowNode : ListButtonNode
 
     public unsafe void AddFavoriteStar(bool favorite, Func<bool> toggle)
     {
+        // Component defaults to no sound effect at all; borrow the same id
+        // KamiToolKit's own dropdown uses for a selection click, since
+        // nothing else on this row ever plays a sound.
+        Component->SoundEffectId = 1;
         favoriteButton = new LabelTextNode {
             Size = new Vector2(28, 28), FontSize = 20,
             AlignmentType = AlignmentType.Center, TextFlags = TextFlags.None,
@@ -67,9 +71,9 @@ public sealed class FishEntryRowNode : ListButtonNode
             favoriteButton.TextTooltip = value ? "Remove from favorites" : "Add to favorites";
         }
         favoriteButton.AddEvent(AtkEventType.MouseDown, () => {
-            var framework = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance();
-            if (framework != null && (framework->CursorInputs.MouseButtonPressedFlags & FFXIVClientStructs.FFXIV.Client.System.Input.MouseButtonFlags.LBUTTON) != 0)
-                Update(toggle());
+            if (!NativeMouseInput.IsLeftButtonPressed()) return;
+            Update(toggle());
+            Component->PlaySoundEffect();
         });
         favoriteButton.AddEvent(AtkEventType.MouseOver, () => { favoriteHovered = true; Update(saved); });
         favoriteButton.AddEvent(AtkEventType.MouseOut, () => { favoriteHovered = false; Update(saved); });

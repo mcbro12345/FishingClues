@@ -102,16 +102,23 @@ public sealed partial class Plugin
         return null;
     }
 
+    // Shared by FindNextAvailability and FindAvailabilityEnd: whether the
+    // weather (and, if gated, the previous window's weather) at window start
+    // ws satisfies the fish's condition.
+    private bool WeatherMatchesAt(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long ws)
+    {
+        bool weatherOk = !weatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws)) is uint w && condition.Weather.Contains(w));
+        if (!weatherOk) return false;
+        return !prevWeatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws - EorzeaWeather.SecondsPerWeatherWindow)) is uint pw && condition.PreviousWeather.Contains(pw));
+    }
+
     private long? FindNextAvailability(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long now)
     {
         long windowStart = EorzeaWeather.WindowStart(now);
         for (int i = 0; i < MaxAvailabilityWindowsToScan; i++)
         {
             long ws = windowStart + i * EorzeaWeather.SecondsPerWeatherWindow;
-            bool weatherOk = !weatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws)) is uint w && condition.Weather.Contains(w));
-            if (!weatherOk) continue;
-            bool prevOk = !prevWeatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws - EorzeaWeather.SecondsPerWeatherWindow)) is uint pw && condition.PreviousWeather.Contains(pw));
-            if (!prevOk) continue;
+            if (!WeatherMatchesAt(condition, weatherRateId, weatherGated, prevWeatherGated, ws)) continue;
             long? match = FirstTimeMatchInWindow(ws, condition.StartHour, condition.EndHour, i == 0 ? now : ws);
             if (match is long t) return t;
         }
@@ -125,9 +132,7 @@ public sealed partial class Plugin
         {
             long ws = windowStart + i * EorzeaWeather.SecondsPerWeatherWindow;
             long windowEnd = ws + EorzeaWeather.SecondsPerWeatherWindow;
-            bool weatherOk = !weatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws)) is uint w && condition.Weather.Contains(w));
-            bool prevOk = !prevWeatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws - EorzeaWeather.SecondsPerWeatherWindow)) is uint pw && condition.PreviousWeather.Contains(pw));
-            if (!weatherOk || !prevOk)
+            if (!WeatherMatchesAt(condition, weatherRateId, weatherGated, prevWeatherGated, ws))
                 return Math.Max(now, ws); // Weather (or previous weather) lapses at this window's start.
             if (!timeGated)
                 continue; // No daily time restriction; availability only ends when weather changes.
