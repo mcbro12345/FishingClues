@@ -90,7 +90,8 @@ public sealed class WindowManager
             Math.Clamp(configuration.NativeWindowHeight, 450.0f, 1000.0f),
             configuration.NativeRegionWidth,
             configuration.NativeAreaWidth,
-            configuration.NativeAreaDropdownWidth,
+            configuration.NativeAreaDropdownLeftInset,
+            configuration.NativeAreaDropdownRightInset,
             configuration.ShowOpenNormalLogButton);
     }
 
@@ -154,7 +155,8 @@ public sealed class WindowManager
                 nativeJournal?.Dispose();
                 nativeJournal = new NativeJournalWindow(regions, nativeJournalState,
                     configuration.NativeRegionWidth, configuration.NativeAreaWidth,
-                    configuration.NativeAreaDropdownWidth, configuration.ShowOpenNormalLogButton,
+                    configuration.NativeAreaDropdownLeftInset, configuration.NativeAreaDropdownRightInset,
+                    configuration.ShowOpenNormalLogButton,
                     OpenNormalFishingLog, configuration, formatter.BuildFishSection,
                     ex => Services.Log.Error(ex, "Native journal button failed; using the text fallback."),
                     () => Services.PluginInterface.SavePluginConfig(configuration), Services.AddonEvents,
@@ -210,7 +212,7 @@ public sealed class WindowManager
                     .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToArray();
                 nativeGuide?.Dispose();
                 nativeGuide = new NativeJournalWindow(regions, nativeGuideState,
-                    130, 240, 200, false, OpenNormalFishingLog, configuration, f => new FishClueSection(f.Name, Array.Empty<string>()),
+                    130, 240, 0, 28, false, OpenNormalFishingLog, configuration, f => new FishClueSection(f.Name, Array.Empty<string>()),
                     ex => Services.Log.Error(ex, "Fish guide failed."),
                     () => Services.PluginInterface.SavePluginConfig(configuration), Services.AddonEvents, guideFish: fish, guideDetails: guideDetails.BuildGuideDetails,
                     getAvailability: availability.GetAvailability)

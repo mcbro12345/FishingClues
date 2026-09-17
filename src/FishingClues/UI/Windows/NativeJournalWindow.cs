@@ -36,7 +36,8 @@ public sealed partial class NativeJournalWindow(
     NativeJournalSessionState sessionState,
     float configuredRegionWidth,
     float configuredAreaWidth,
-    float configuredAreaDropdownWidth,
+    float configuredAreaDropdownLeftInset,
+    float configuredAreaDropdownRightInset,
     bool configuredShowNormalLogButton,
     Action openNormalLog,
     Configuration configuration,
@@ -99,7 +100,8 @@ public sealed partial class NativeJournalWindow(
     private Vector2 contentOrigin;
     private float regionWidthSetting = configuredRegionWidth;
     private float areaWidthSetting = configuredAreaWidth;
-    private float dropdownWidthSetting = configuredAreaDropdownWidth;
+    private float dropdownLeftInsetSetting = configuredAreaDropdownLeftInset;
+    private float dropdownRightInsetSetting = configuredAreaDropdownRightInset;
     private bool showNormalLogButton = configuredShowNormalLogButton;
 
     protected override unsafe void OnSetup(AtkUnitBase* addon, Span<AtkValue> values)
@@ -302,12 +304,13 @@ public sealed partial class NativeJournalWindow(
         }
     }
 
-    public void ApplyLayout(float windowWidth, float windowHeight, float regionWidth, float areaWidth, float dropdownWidth,
-        bool configuredShowButton)
+    public void ApplyLayout(float windowWidth, float windowHeight, float regionWidth, float areaWidth,
+        float dropdownLeftInset, float dropdownRightInset, bool configuredShowButton)
     {
         regionWidthSetting = regionWidth;
         areaWidthSetting = areaWidth;
-        dropdownWidthSetting = dropdownWidth;
+        dropdownLeftInsetSetting = dropdownLeftInset;
+        dropdownRightInsetSetting = dropdownRightInset;
         showNormalLogButton = configuredShowButton;
         Size = new Vector2(windowWidth, windowHeight);
         nextAvailabilityRefresh = 0;
@@ -490,10 +493,21 @@ public sealed partial class NativeJournalWindow(
         if (configuration.IsDividerLocked(dragKind)) ReleaseResizeCursor();
     }
 
+    private const float MinDropdownWidth = 80.0f;
+
+    private float EffectiveLeftInset()
+    {
+        float availableWidth = areaList is null ? areaWidthSetting : areaList.ContentNode.Width;
+        float maxInset = Math.Max(0.0f, availableWidth - 12.0f - MinDropdownWidth - Math.Max(0.0f, dropdownRightInsetSetting));
+        return Math.Clamp(dropdownLeftInsetSetting, 0.0f, maxInset);
+    }
+
     private float EffectiveDropdownWidth()
     {
         float availableWidth = areaList is null ? areaWidthSetting : areaList.ContentNode.Width;
-        return Math.Clamp(dropdownWidthSetting, 120.0f, Math.Max(120.0f, availableWidth - 12.0f));
+        float leftInset = EffectiveLeftInset();
+        float usable = availableWidth - 12.0f - leftInset - Math.Max(0.0f, dropdownRightInsetSetting);
+        return Math.Max(MinDropdownWidth, usable);
     }
 
     private void ApplyAreaDropdownWidths()
@@ -504,6 +518,11 @@ public sealed partial class NativeJournalWindow(
         foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
             header.Width = width;
         areaList.ContentNode.RecalculateLayout();
+        // the list above just reset every header back to X=0 (its default left
+        // alignment) - reapply the left inset now that it's the last word on X
+        float leftInset = EffectiveLeftInset();
+        foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
+            header.X = leftInset;
         areaList.RecalculateSizes();
     }
 

@@ -135,13 +135,19 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             DrawWrappedHint("Lets you drag the region and area column edges directly in the journal, the same way the fish / details divider already works.");
 
             ImGui.Spacing();
-            float dropdownWidth = configuration.NativeAreaDropdownWidth;
-            if (ImGui.SliderFloat("Area dropdown width", ref dropdownWidth, 120.0f, 999.0f, "%.0f"))
+            float dropdownLeftInset = configuration.NativeAreaDropdownLeftInset;
+            if (ImGui.SliderFloat("Area dropdown left inset", ref dropdownLeftInset, 0.0f, 150.0f, "%.0f"))
             {
-                configuration.NativeAreaDropdownWidth = dropdownWidth;
+                configuration.NativeAreaDropdownLeftInset = dropdownLeftInset;
                 SaveLayout();
             }
-            DrawWrappedHint("999 always matches the area column's current width.");
+            float dropdownRightInset = configuration.NativeAreaDropdownRightInset;
+            if (ImGui.SliderFloat("Area dropdown right inset", ref dropdownRightInset, 0.0f, 150.0f, "%.0f"))
+            {
+                configuration.NativeAreaDropdownRightInset = dropdownRightInset;
+                SaveLayout();
+            }
+            DrawWrappedHint("0 on both sides fills the area column. Raise either side to shrink the dropdown box in from that edge.");
             ImGui.Unindent();
         }
     }
