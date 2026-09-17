@@ -13,8 +13,10 @@ namespace FishingClues.UI.Windows;
 public sealed class DalamudSettingsWindow(Configuration configuration, Action save, Action applyNativeLayout, Action openDiagnostics, Action refreshData, Func<bool> refreshBusy, Func<string> refreshStatus, IKeyState keyState, Action refreshJournalContents)
     : Window("Fishing Clues Settings###FishingCluesSettings")
 {
-    private const float DefaultRegionWidth = 162.0f;
-    private const float DefaultAreaWidth = 263.0f;
+    private const float DefaultRegionWidth = 181.0f;
+    private const float DefaultAreaWidth = 286.0f;
+    private const float DefaultAreaDropdownLeftInset = 1.0f;
+    private const float DefaultAreaDropdownRightInset = 0.0f;
 
     private bool capturingKeybind;
 
@@ -128,7 +130,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
                 configuration.LockRegionDivider = !unlockRegionDivider;
                 SaveLayout();
             }
-            if (ImGui.Button("Restore default region width##RegionWidthDefault"))
+            if (ImGui.Button("Restore default region divider position##RegionWidthDefault"))
             {
                 configuration.NativeRegionWidth = DefaultRegionWidth;
                 SaveLayout();
@@ -139,7 +141,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
                 configuration.LockAreaDivider = !unlockAreaDivider;
                 SaveLayout();
             }
-            if (ImGui.Button("Restore default area width##AreaWidthDefault"))
+            if (ImGui.Button("Restore default area divider position##AreaWidthDefault"))
             {
                 configuration.NativeAreaWidth = DefaultAreaWidth;
                 SaveLayout();
@@ -154,9 +156,9 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
                 configuration.NativeAreaDropdownLeftInset = dropdownLeftInset;
                 SaveLayout();
             }
-            if (ImGui.Button("Restore default##AreaDropdownLeftInsetDefault"))
+            if (ImGui.Button("Restore default left inset##AreaDropdownLeftInsetDefault"))
             {
-                configuration.NativeAreaDropdownLeftInset = 0.0f;
+                configuration.NativeAreaDropdownLeftInset = DefaultAreaDropdownLeftInset;
                 SaveLayout();
             }
             ImGui.Text("Area dropdown right inset");
@@ -166,9 +168,9 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
                 configuration.NativeAreaDropdownRightInset = dropdownRightInset;
                 SaveLayout();
             }
-            if (ImGui.Button("Restore default##AreaDropdownRightInsetDefault"))
+            if (ImGui.Button("Restore default right inset##AreaDropdownRightInsetDefault"))
             {
-                configuration.NativeAreaDropdownRightInset = 0.0f;
+                configuration.NativeAreaDropdownRightInset = DefaultAreaDropdownRightInset;
                 SaveLayout();
             }
             DrawWrappedHint("0 on both sides is the recommended layout. Positive shrinks the dropdown box in from that edge; negative extends it past that edge.");

@@ -4,17 +4,17 @@ namespace FishingClues.Base;
 
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 16;
+    public int Version { get; set; } = 17;
     public System.Collections.Generic.HashSet<uint> FavoriteFishItemIds { get; set; } = new();
     public System.Collections.Generic.Dictionary<ulong, System.Collections.Generic.HashSet<uint>> RevealedFish { get; set; } = new();
     public float NativeWindowWidth { get; set; } = 1050.0f;
     public float NativeWindowHeight { get; set; } = 680.0f;
-    public float NativeRegionWidth { get; set; } = 162.0f;
-    public float NativeAreaWidth { get; set; } = 263.0f;
+    public float NativeRegionWidth { get; set; } = 181.0f;
+    public float NativeAreaWidth { get; set; } = 286.0f;
     // How far the area dropdown boxes are inset from the left/right edges of the
     // area column, relative to DropdownLeftInsetBaseline/DropdownRightInsetBaseline
     // below - the sliders read 0 at that preferred baseline, not at "fills the column".
-    public float NativeAreaDropdownLeftInset { get; set; }
+    public float NativeAreaDropdownLeftInset { get; set; } = 1.0f;
     public float NativeAreaDropdownRightInset { get; set; }
     // The actual left/right inset (in pixels) when the sliders above read 0.
     public const float DropdownLeftInsetBaseline = -2.0f;

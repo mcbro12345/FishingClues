@@ -105,6 +105,14 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             }
             configuration.Version = 16;
         }
+        if (configuration.Version < 17)
+        {
+            configuration.NativeRegionWidth = 181.0f;
+            configuration.NativeAreaWidth = 286.0f;
+            configuration.NativeAreaDropdownLeftInset = 1.0f;
+            configuration.NativeAreaDropdownRightInset = 0.0f;
+            configuration.Version = 17;
+        }
     }
 
     public void Dispose()
