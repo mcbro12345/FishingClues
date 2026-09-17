@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 
 namespace FishingClues.Game.Models;
 
@@ -28,7 +29,15 @@ public sealed record JournalSpot(
     bool IsUnlocked,
     ushort RegionPlaceNameId,
     ushort SpotPlaceNameId,
-    IReadOnlyList<JournalFish> Fish)
+    IReadOnlyList<JournalFish> Fish,
+    // Pixel position on the area's 2048x2048 map texture (1024,1024 = map
+    // center), already converted from the fishing hole's raw world X/Z via the
+    // same Map SizeFactor/Offset the game itself uses. Null when the spot's
+    // territory has no usable map (e.g. an instanced or non-field zone).
+    Vector2? MapPixelPosition = null,
+    // Game path of the area's map texture (e.g. "ui/map/s1d1/00/s1d100_m.tex"),
+    // shared by every spot in the same territory. Null alongside MapPixelPosition.
+    string? MapTexturePath = null)
 {
     public int CaughtCount => Fish.Count(f => f.IsCaught);
     public int MissingCount => Fish.Count - CaughtCount;

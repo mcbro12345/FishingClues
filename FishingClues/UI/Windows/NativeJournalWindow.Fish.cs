@@ -114,6 +114,7 @@ public sealed partial class NativeJournalWindow
                 if (expanded)
                 {
                     sessionState.ExpandedAreas.Add(areaKey);
+                    ShowAreaMap(area);
                 }
                 else
                 {
@@ -164,6 +165,10 @@ public sealed partial class NativeJournalWindow
             var restoredRow = fishButtons.FirstOrDefault(p => p.Value == sessionState.SelectedFish).Key;
             restoredRow?.OnClick?.Invoke();
         }
+        JournalArea? mapDefaultArea = restoredSpot is not null
+            ? region.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == restoredSpot.Id))
+            : region.Areas.FirstOrDefault();
+        if (mapDefaultArea is not null) ShowAreaMap(mapDefaultArea);
         if (remembered is not null) {
             RestoreScroll(areaList, remembered.AreaScroll);
             RestoreScroll(fishList, remembered.FishScroll);

@@ -1,13 +1,16 @@
 using Dalamud.Game.NativeWrapper;
+using Dalamud.Utility;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using FishParameterSheet = Lumina.Excel.Sheets.FishParameter;
 using FishingSpotSheet = Lumina.Excel.Sheets.FishingSpot;
 using ItemSheet = Lumina.Excel.Sheets.Item;
+using MapSheet = Lumina.Excel.Sheets.Map;
 using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 using FishingClues.Base;
@@ -116,8 +119,10 @@ public sealed class JournalBuilder
             ushort regionPlaceNameId = (ushort)(spot.PlaceNameMain.RowId != 0
                 ? spot.PlaceNameMain.RowId : territoryRow?.PlaceNameRegion.RowId ?? 0);
             ushort spotPlaceNameId = (ushort)spot.PlaceName.RowId;
+            MapSheet? mapRow = territoryRow?.Map.ValueNullable;
+            (Vector2? mapPixel, string? mapTexturePath) = BuildMapInfo(mapRow, spot.X, spot.Z);
             spots.Add(new JournalSpot(spot.RowId, spotName, area, region, spot.TerritoryType.RowId, mapId,
-                order, isUnlocked, regionPlaceNameId, spotPlaceNameId, entries));
+                order, isUnlocked, regionPlaceNameId, spotPlaceNameId, entries, mapPixel, mapTexturePath));
         }
 
         journalCache = spots.GroupBy(s => s.Region)
@@ -132,6 +137,37 @@ public sealed class JournalBuilder
             .ToArray();
         lastJournalBuild = Environment.TickCount64;
         return journalCache;
+    }
+
+    // Converts a fishing hole's raw world X/Z into a pixel position on its
+    // area's 2048x2048 map texture (1024,1024 = center), using the same
+    // Map SizeFactor/Offset the game itself uses to place markers, and
+    // resolves the game path of that map's own texture.
+    //
+    // The world->human "map coordinate" step below is Dalamud's own vetted
+    // MapUtil.WorldToMap; the human-coordinate->pixel step and the texture
+    // path convention ("ui/map/{folder}/{variant}/{folder}{variant}_m.tex")
+    // follow the widely-used FFXIV community formula/convention, not an
+    // official Dalamud API - if a marker looks visibly off or the map image
+    // doesn't load, that conversion is the first thing to check.
+    private static (Vector2? Pixel, string? TexturePath) BuildMapInfo(MapSheet? map, short worldX, short worldZ)
+    {
+        if (map is not MapSheet mapRow || mapRow.RowId == 0)
+            return (null, null);
+
+        Vector2 humanCoordinate = MapUtil.WorldToMap(new Vector2(worldX, worldZ), mapRow);
+        float scale = mapRow.SizeFactor / 100.0f;
+        if (scale <= 0) return (null, null);
+        var pixel = new Vector2(
+            1024.0f + (humanCoordinate.X - 1.0f) * 50.0f * scale,
+            1024.0f + (humanCoordinate.Y - 1.0f) * 50.0f * scale);
+
+        string id = mapRow.Id.ToString();
+        int slash = id.IndexOf('/');
+        string? texturePath = slash > 0 && slash < id.Length - 1
+            ? $"ui/map/{id[..slash]}/{id[(slash + 1)..]}/{id[..slash]}{id[(slash + 1)..]}_m.tex"
+            : null;
+        return (pixel, texturePath);
     }
 
     private unsafe void ResetJournalCharacter()

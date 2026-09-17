@@ -124,7 +124,8 @@ public sealed partial class NativeJournalWindow(
 
         float regionListHeight = ContentSize.Y - HeaderHeight - (showNormalLogButton || openGuide is not null ? 48.0f : 0.0f);
         regionList = CreateList(contentOrigin + new Vector2(0, HeaderHeight), new Vector2(regionWidth, regionListHeight));
-        areaList = CreateList(contentOrigin + new Vector2(regionWidth + ColumnGap, HeaderHeight), new Vector2(areaWidth, ContentSize.Y - HeaderHeight));
+        areaList = CreateList(contentOrigin + new Vector2(regionWidth + ColumnGap, HeaderHeight),
+            new Vector2(areaWidth, Math.Max(100.0f, ContentSize.Y - HeaderHeight - ReservedMapHeight())));
         areaList.ContentNode.FitWidth = false;
         fishList = CreateList(contentOrigin + new Vector2(fishX, HeaderHeight), new Vector2(ContentSize.X - fishX, ContentSize.Y - HeaderHeight));
         detailsList = CreateList(contentOrigin, new Vector2(200, 150));
@@ -168,6 +169,7 @@ public sealed partial class NativeJournalWindow(
         areaList.AttachNode(this);
         fishList.AttachNode(this);
         ApplyAreaDropdownWidths();
+        if (!GuideMode) BuildMapPanel();
 
         LayoutAttachedNodes();
 
@@ -418,7 +420,7 @@ public sealed partial class NativeJournalWindow(
         regionList.Position = contentOrigin + new Vector2(0.0f, HeaderHeight);
         regionList.Size = new Vector2(regionWidth, regionListHeight);
         areaList.Position = contentOrigin + new Vector2(regionWidth + ColumnGap, HeaderHeight);
-        areaList.Size = new Vector2(areaWidth, listHeight);
+        areaList.Size = new Vector2(areaWidth, Math.Max(100.0f, listHeight - ReservedMapHeight()));
         if (spotTitle is not null)
         {
             spotTitle.Position = contentOrigin + new Vector2(fishX, HeaderHeight);
@@ -508,6 +510,7 @@ public sealed partial class NativeJournalWindow(
         foreach (var pair in regionButtons)
             pair.Key.String = pair.Value.IsUnlocked ? pair.Value.Name : "???";
         if (configuration.IsDividerLocked(dragKind)) ReleaseResizeCursor();
+        LayoutMapPanel();
     }
 
     private const float MinDropdownWidth = 80.0f;

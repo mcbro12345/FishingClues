@@ -143,6 +143,7 @@ public sealed partial class NativeJournalWindow
                 if (fishList is not null) RestoreScroll(fishList, fishScroll);
             }
         }
+        UpdateMapInteraction(addon, mouse, stage);
         bool animating = false;
         if (areaList is not null)
         {
@@ -201,6 +202,7 @@ public sealed partial class NativeJournalWindow
         searchInput = null;
         searchButton = null;
         searchPending = false;
+        DisposeMapPanel();
     }
 
     protected override unsafe void OnHide(AtkUnitBase* addon)

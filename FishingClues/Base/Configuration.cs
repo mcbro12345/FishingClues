@@ -43,6 +43,7 @@ public sealed class Configuration : IPluginConfiguration
     }
     public float DetailsHeightRatio { get; set; } = 0.38f;
     public bool ShowOpenNormalLogButton { get; set; } = true;
+    public bool ShowAreaLocationMap { get; set; } = true;
     public bool ReplaceNormalFishingLog { get; set; } = true;
     public bool JournalKeybindEnabled { get; set; }
     public int JournalKeybindKey { get; set; }

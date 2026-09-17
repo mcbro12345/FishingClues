@@ -57,6 +57,13 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             configuration.ShowOpenNormalLogButton = showButton;
             SaveLayout();
         }
+        bool showAreaMap = configuration.ShowAreaLocationMap;
+        if (ImGui.Checkbox("Show the area location map", ref showAreaMap))
+        {
+            configuration.ShowAreaLocationMap = showAreaMap;
+            SaveLayout();
+        }
+        DrawWrappedHint("Shows a map under the area list for the area you have open, so you can click a fishing hole directly on it.");
         bool disableCountdown = configuration.DisableAvailabilityCountdown;
         if (ImGui.Checkbox("Disable the availability countdown timer", ref disableCountdown))
         {
