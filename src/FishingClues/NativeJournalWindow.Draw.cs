@@ -109,7 +109,7 @@ public sealed partial class NativeJournalWindow
         }
         if (draggingDivider)
         {
-            if (!mouse.IsGameWindowFocused || (mouse.MouseButtonHeldFlags & MouseButtonFlags.LBUTTON) == 0 || configuration.IsDividerLocked(dragKind) || (dragKind == 0 && !configuration.EmbedFishDetails))
+            if (!mouse.IsGameWindowFocused || (mouse.MouseButtonHeldFlags & MouseButtonFlags.LBUTTON) == 0 || configuration.IsDividerLocked(dragKind))
             {
                 draggingDivider = false;
                 saveDivider();

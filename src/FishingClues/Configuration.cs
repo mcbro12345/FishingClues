@@ -12,7 +12,6 @@ public sealed class Configuration : IPluginConfiguration
     public float NativeRegionWidth { get; set; } = 162.0f;
     public float NativeAreaWidth { get; set; } = 263.0f;
     public float NativeAreaDropdownWidth { get; set; } = 999.0f;
-    public bool EmbedFishDetails { get; set; } = true;
     public bool AutoRefreshFishData { get; set; } = true;
     public bool DisableAvailabilityCountdown { get; set; }
     public bool Use12HourTime { get; set; }
@@ -26,7 +25,6 @@ public sealed class Configuration : IPluginConfiguration
     {
         RevealedFish ??= new();
         FavoriteFishItemIds ??= new();
-        EmbedFishDetails = true;
     }
     public float DetailsHeightRatio { get; set; } = 0.38f;
     public bool ShowOpenNormalLogButton { get; set; } = true;

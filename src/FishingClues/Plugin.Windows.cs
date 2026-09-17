@@ -73,7 +73,7 @@ public sealed partial class Plugin
                 nativeJournal = new NativeJournalWindow(regions, nativeJournalState,
                     configuration.NativeRegionWidth, configuration.NativeAreaWidth,
                     configuration.NativeAreaDropdownWidth, configuration.ShowOpenNormalLogButton,
-                    OpenFish, OpenNormalFishingLog, configuration, BuildFishSection,
+                    OpenNormalFishingLog, configuration, BuildFishSection,
                     ex => Log.Error(ex, "Native journal button failed; using the text fallback."),
                     () => PluginInterface.SavePluginConfig(configuration), AddonEvents,
                     () => _ = OpenGuideAsync(), guideDetails: BuildGuideDetails, getAvailability: GetFishAvailability)
@@ -123,7 +123,7 @@ public sealed partial class Plugin
                     .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToArray();
                 nativeGuide?.Dispose();
                 nativeGuide = new NativeJournalWindow(regions, nativeGuideState,
-                    130, 240, 200, false, OpenFish, OpenNormalFishingLog, configuration, f => new FishClueSection(f.Name, Array.Empty<string>()),
+                    130, 240, 200, false, OpenNormalFishingLog, configuration, f => new FishClueSection(f.Name, Array.Empty<string>()),
                     ex => Log.Error(ex, "Fish guide failed."),
                     () => PluginInterface.SavePluginConfig(configuration), AddonEvents, guideFish: fish, guideDetails: BuildGuideDetails,
                     getAvailability: GetFishAvailability) {
@@ -135,9 +135,6 @@ public sealed partial class Plugin
             });
         } catch (Exception ex) { Log.Error(ex, "Could not open fish guide."); }
     }
-
-    private void OpenFish(JournalFish fish)
-        => OpenSections([BuildFishSection(fish)]);
 
     private void OpenClues(IReadOnlyList<HiddenFish> fish)
     {

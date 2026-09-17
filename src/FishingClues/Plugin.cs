@@ -277,8 +277,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
     private void SaveConfiguration()
     {
         PluginInterface.SavePluginConfig(configuration);
-        if (configuration.EmbedFishDetails)
-            dalamudClues.IsOpen = false;
+        dalamudClues.IsOpen = false;
     }
 
     private void ApplyLiveNativeLayout()

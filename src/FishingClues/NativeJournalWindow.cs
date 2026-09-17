@@ -33,7 +33,6 @@ public sealed partial class NativeJournalWindow(
     float configuredAreaWidth,
     float configuredAreaDropdownWidth,
     bool configuredShowNormalLogButton,
-    Action<JournalFish> openFish,
     Action openNormalLog,
     Configuration configuration,
     Func<JournalFish, FishClueSection> buildDetails,
@@ -128,7 +127,7 @@ public sealed partial class NativeJournalWindow(
         dividerHandle = new CollisionNode { ShowClickableCursor = false };
         dividerHandle.AddEvent(AtkEventType.MouseDown, () =>
         {
-            if (!configuration.EmbedFishDetails || configuration.IsDividerLocked(0)) return;
+            if (configuration.IsDividerLocked(0)) return;
             BeginDividerDrag(0);
         });
         dividerHandle.AttachNode(this);
@@ -390,30 +389,25 @@ public sealed partial class NativeJournalWindow(
         RefreshFishListLayout();
         if (detailsList is not null && detailsDivider is not null)
         {
-            bool embedded = configuration.EmbedFishDetails;
             float ratio = float.IsFinite(configuration.DetailsHeightRatio) ? configuration.DetailsHeightRatio : 0.38f;
             float detailsHeight = Math.Clamp(fishBodyHeight * ratio, 100, Math.Max(100, fishBodyHeight - 112));
             float fishHeight = fishBodyHeight - detailsHeight - 12.0f;
-            detailsList.IsVisible = embedded;
-            detailsDivider.IsVisible = embedded;
+            detailsList.IsVisible = true;
+            detailsDivider.IsVisible = true;
             if (dividerHandle is not null)
             {
-                dividerHandle.IsVisible = embedded && !configuration.IsDividerLocked(0);
+                dividerHandle.IsVisible = !configuration.IsDividerLocked(0);
                 dividerHandle.ShowClickableCursor = false;
                 dividerHandle.Position = fishList.Position + new Vector2(0, fishHeight);
                 dividerHandle.Size = new Vector2(fishWidth, 12);
             }
-            if (embedded)
-            {
-                fishList.Height = fishHeight;
-                detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight + 3.0f);
-                detailsDivider.Width = fishWidth;
-                Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 12.0f);
-                detailsList.Position = panelOrigin + new Vector2(8, 8);
-                detailsList.Size = new Vector2(fishWidth - 16, detailsHeight - 16);
-                ReflowDetails();
-            }
-            else ClearDetails();
+            fishList.Height = fishHeight;
+            detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight + 3.0f);
+            detailsDivider.Width = fishWidth;
+            Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 12.0f);
+            detailsList.Position = panelOrigin + new Vector2(8, 8);
+            detailsList.Size = new Vector2(fishWidth - 16, detailsHeight - 16);
+            ReflowDetails();
         }
 
         SetDividerLayout(regionDivider, regionWidth + ColumnGap / 2.0f, false);

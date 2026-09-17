@@ -241,7 +241,6 @@ public sealed partial class NativeJournalWindow
             {
                 selectedFish = entry.FishParameterId;
                 UpdateFishSelection();
-                if (!configuration.EmbedFishDetails) { openFish(entry); return; }
                 selectedDetails = buildDetails(entry);
                 if (guideDetails is not null) {
                     selectedGuide = guideDetails(entry);

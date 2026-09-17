@@ -121,7 +121,7 @@ public sealed partial class NativeJournalWindow
         if (detailsHint is null || detailsList is null) return;
         detailsHint.Position = detailsList.Position;
         detailsHint.Size = detailsList.Size;
-        detailsHint.IsVisible = configuration.EmbedFishDetails && selectedDetails is null;
+        detailsHint.IsVisible = selectedDetails is null;
     }
 
     private void AddDetailLine(string text)
