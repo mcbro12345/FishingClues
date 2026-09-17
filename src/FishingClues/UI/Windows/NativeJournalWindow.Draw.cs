@@ -150,12 +150,16 @@ public sealed partial class NativeJournalWindow
                 animating |= header.Tick();
             float previousHeight = areaList.ContentNode.Height;
             areaList.ContentNode.RecalculateLayout();
-            ReapplyDropdownLeftInset();
             if (animating || previousHeight != areaList.ContentNode.Height)
             {
                 areaList.RecalculateSizes();
 
             }
+            // RecalculateSizes() above (when it runs) internally re-triggers
+            // ContentNode.RecalculateLayout(), which resets every header's X back
+            // to 0 - reapply the inset after that, not before, so it isn't wiped
+            // out again by the very call meant to size things correctly.
+            ReapplyDropdownLeftInset();
         }
     }
 

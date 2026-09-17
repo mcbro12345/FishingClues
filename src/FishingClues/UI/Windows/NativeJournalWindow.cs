@@ -496,10 +496,14 @@ public sealed partial class NativeJournalWindow(
     private const float MinDropdownWidth = 80.0f;
     private const float MaxDropdownInset = 150.0f;
 
-    // Negative insets let the dropdown box extend past that edge of the area
-    // column instead of only ever shrinking in from it.
-    private float EffectiveLeftInset() => Math.Clamp(dropdownLeftInsetSetting, -MaxDropdownInset, MaxDropdownInset);
-    private float EffectiveRightInset() => Math.Clamp(dropdownRightInsetSetting, -MaxDropdownInset, MaxDropdownInset);
+    // The sliders are relative to a preferred baseline (0 on the slider = that
+    // baseline, not "fills the column"). Negative insets (from the baseline) let
+    // the dropdown box extend past that edge of the area column instead of only
+    // ever shrinking in from it.
+    private float EffectiveLeftInset() => Math.Clamp(
+        dropdownLeftInsetSetting + Configuration.DropdownLeftInsetBaseline, -MaxDropdownInset, MaxDropdownInset);
+    private float EffectiveRightInset() => Math.Clamp(
+        dropdownRightInsetSetting + Configuration.DropdownRightInsetBaseline, -MaxDropdownInset, MaxDropdownInset);
 
     private float EffectiveDropdownWidth()
     {
@@ -516,14 +520,16 @@ public sealed partial class NativeJournalWindow(
         foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
             header.Width = width;
         areaList.ContentNode.RecalculateLayout();
-        ReapplyDropdownLeftInset();
         areaList.RecalculateSizes();
+        // ScrollingNode.RecalculateSizes() (via its own OnSizeChanged) ends by
+        // calling ContentNode.RecalculateLayout() again internally, which resets
+        // every header back to X=0 (its default left alignment) - so the inset has
+        // to be reapplied after RecalculateSizes(), not before it, or it's wiped
+        // out before this method even returns and the dropdown stays unclickable
+        // at the spot it's actually drawn.
+        ReapplyDropdownLeftInset();
     }
 
-    // areaList.ContentNode.RecalculateLayout() always resets every header back to
-    // X=0 (its default left alignment), both here and in the per-frame animation
-    // tick in OnDraw - reapply the left inset every time that call runs, or it
-    // snaps back to 0 (and the dropdown becomes unclickable at its real position).
     private void ReapplyDropdownLeftInset()
     {
         if (areaList is null) return;

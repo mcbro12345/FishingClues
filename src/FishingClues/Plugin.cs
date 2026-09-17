@@ -92,6 +92,19 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             configuration.NativeWindowWidth = 1050.0f;
             configuration.Version = 15;
         }
+        if (configuration.Version < 16)
+        {
+            // the dropdown inset sliders used to read the actual pixel inset
+            // directly; they now read relative to the preferred baseline below,
+            // so an existing custom value needs to shift to stay at the same
+            // effective inset instead of jumping when the baseline is applied
+            if (configuration.NativeAreaDropdownLeftInset != 0.0f || configuration.NativeAreaDropdownRightInset != 0.0f)
+            {
+                configuration.NativeAreaDropdownLeftInset -= Configuration.DropdownLeftInsetBaseline;
+                configuration.NativeAreaDropdownRightInset -= Configuration.DropdownRightInsetBaseline;
+            }
+            configuration.Version = 16;
+        }
     }
 
     public void Dispose()
