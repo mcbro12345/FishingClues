@@ -123,6 +123,31 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
             configuration.NativeAreaDropdownWidth = 999.0f;
             configuration.Version = 10;
         }
+        if (configuration.Version < 11)
+        {
+            // Reverted the area column back to its original proportions;
+            // the divider positions are now set by hand instead (see the
+            // temporary region/area divider unlock in settings).
+            configuration.NativeAreaWidth = 350.0f;
+            configuration.NativeAreaDropdownWidth = 310.0f;
+            configuration.Version = 11;
+        }
+        if (configuration.Version < 12)
+        {
+            // Column widths measured by hand with the temporary divider
+            // unlock, matching the intended layout exactly.
+            configuration.NativeRegionWidth = 162.0f;
+            configuration.NativeAreaWidth = 263.0f;
+            configuration.Version = 12;
+        }
+        if (configuration.Version < 13)
+        {
+            // The dropdown should hug both the left and right edges of the
+            // area column, not just the left; letting it stretch (instead of
+            // centering it) does that without reintroducing a left gap.
+            configuration.NativeAreaDropdownWidth = 999.0f;
+            configuration.Version = 13;
+        }
         PluginInterface.SavePluginConfig(configuration);
         regionByZone = data.Info.Values
             .Where(info => !string.IsNullOrWhiteSpace(info.Zone) && !string.IsNullOrWhiteSpace(info.Region))
@@ -231,6 +256,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         report.AppendLine($"Fishing Clues {typeof(Plugin).Assembly.GetName().Version}");
         report.AppendLine($"Client structs: {typeof(PlayerState).Assembly.GetName().Version}");
         report.AppendLine($"Normal-log return: {normalLogReturnStatus}");
+        report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}; areaDropdownWidth={configuration.NativeAreaDropdownWidth:0.#}");
         report.AppendLine($"Replacement={configuration.ReplaceNormalFishingLog}; loggedIn={ClientState.IsLoggedIn}; explicit={allowExplicitVanillaLog}; seenVisible={normalLogWasVisible}; closeQueued={normalLogCloseRequested}; customOpen={nativeJournal?.IsOpen == true}");
         try
         {

@@ -10,14 +10,14 @@ public enum JournalUiMode
 
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 10;
+    public int Version { get; set; } = 13;
     public System.Collections.Generic.HashSet<uint> FavoriteFishItemIds { get; set; } = new();
     public System.Collections.Generic.Dictionary<ulong, System.Collections.Generic.HashSet<uint>> RevealedFish { get; set; } = new();
     public JournalUiMode UiMode { get; set; } = JournalUiMode.Native;
     public float NativeWindowWidth { get; set; } = 1050.0f;
     public float NativeWindowHeight { get; set; } = 680.0f;
-    public float NativeRegionWidth { get; set; } = 180.0f;
-    public float NativeAreaWidth { get; set; } = 280.0f;
+    public float NativeRegionWidth { get; set; } = 162.0f;
+    public float NativeAreaWidth { get; set; } = 263.0f;
     public float NativeAreaDropdownWidth { get; set; } = 999.0f;
     public bool OpenUnknownOnLeftClick { get; set; }
     public bool UseNativeFishDetails { get; set; }
