@@ -109,6 +109,20 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
             dataRefreshStatus = $"Cached data: {File.GetLastWriteTime(DataCachePath):g}";
         configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         configuration.ApplySimplifiedJournalSettings();
+        if (configuration.Version < 9)
+        {
+            // The area column was narrowed to leave more room for the fish
+            // panel; existing saves would otherwise keep the old width.
+            configuration.NativeAreaWidth = 280.0f;
+            configuration.Version = 9;
+        }
+        if (configuration.Version < 10)
+        {
+            // The area dropdowns now stretch to nearly fill the column
+            // instead of leaving a wide, uneven gap on either side.
+            configuration.NativeAreaDropdownWidth = 999.0f;
+            configuration.Version = 10;
+        }
         PluginInterface.SavePluginConfig(configuration);
         regionByZone = data.Info.Values
             .Where(info => !string.IsNullOrWhiteSpace(info.Zone) && !string.IsNullOrWhiteSpace(info.Region))
@@ -127,7 +141,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         windowSystem.AddWindow(dalamudSettings);
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the native Fishing Clues journal.\nUse '/fishingclues settings' for options.",
+            HelpMessage = "Open the native Fishing Clues journal.\n/fishingclues settings → Open settings.",
         });
         ContextMenu.OnMenuOpened += OnMenuOpened;
         AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "FishingNote", OnFishingNoteIntercept);

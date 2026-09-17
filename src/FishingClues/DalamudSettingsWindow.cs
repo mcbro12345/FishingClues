@@ -28,27 +28,27 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             configuration.ReplaceNormalFishingLog = replace;
             save();
         }
+        if (replace) capturingKeybind = false;
+        ImGui.BeginDisabled(replace);
+        bool keybindEnabled = configuration.JournalKeybindEnabled;
+        if (ImGui.Checkbox("Open the custom journal with a keybind", ref keybindEnabled))
+        {
+            configuration.JournalKeybindEnabled = keybindEnabled;
+            capturingKeybind = false;
+            save();
+        }
+        if (keybindEnabled)
+        {
+            ImGui.Indent();
+            DrawKeybindCapture();
+            ImGui.Unindent();
+        }
+        ImGui.EndDisabled();
         bool showButton = configuration.ShowOpenNormalLogButton;
         if (ImGui.Checkbox("Show the normal Fishing Log button", ref showButton))
         {
             configuration.ShowOpenNormalLogButton = showButton;
             SaveLayout();
-        }
-        if (!replace)
-        {
-            bool keybindEnabled = configuration.JournalKeybindEnabled;
-            if (ImGui.Checkbox("Open the custom journal with a keybind", ref keybindEnabled))
-            {
-                configuration.JournalKeybindEnabled = keybindEnabled;
-                capturingKeybind = false;
-                save();
-            }
-            if (keybindEnabled)
-            {
-                ImGui.Indent();
-                DrawKeybindCapture();
-                ImGui.Unindent();
-            }
         }
         bool uncaughtFirst = configuration.UncaughtFishFirst;
         if (ImGui.Checkbox("Uncaught fish first", ref uncaughtFirst))

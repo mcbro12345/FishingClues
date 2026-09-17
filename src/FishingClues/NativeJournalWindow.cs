@@ -385,6 +385,7 @@ public sealed class NativeJournalWindow(
             {
                 String = region.IsUnlocked ? area.Name : "???",
                 Width = EffectiveDropdownWidth(),
+                X = EffectiveDropdownInset(),
                 FitWidth = true,
                 ItemSpacing = 2.0f,
                 FirstItemSpacing = 1.0f,
@@ -614,13 +615,25 @@ public sealed class NativeJournalWindow(
         return Math.Clamp(dropdownWidthSetting, 120.0f, Math.Max(120.0f, availableWidth - 12.0f));
     }
 
+    // Centers the dropdown horizontally within the area column, so the gap
+    // to its right (before the fish divider) matches the gap to its left.
+    private float EffectiveDropdownInset()
+    {
+        float availableWidth = areaList is null ? areaWidthSetting : areaList.ContentNode.Width;
+        return Math.Max(0.0f, (availableWidth - EffectiveDropdownWidth()) / 2.0f);
+    }
+
     private void ApplyAreaDropdownWidths()
     {
         if (areaList is null)
             return;
         float width = EffectiveDropdownWidth();
+        float inset = EffectiveDropdownInset();
         foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
+        {
             header.Width = width;
+            header.X = inset;
+        }
         areaList.ContentNode.RecalculateLayout();
         areaList.RecalculateSizes();
     }
