@@ -21,6 +21,7 @@ public sealed class NativeJournalSessionState
     public float RegionScroll, AreaScroll, FishScroll, DetailsScroll;
     public HashSet<string> ExpandedAreas { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, RegionViewState> Regions { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public string SearchText { get; set; } = "";
 }
 
 public sealed record RegionViewState(uint Spot, uint Fish, float AreaScroll, float FishScroll, float DetailsScroll);
@@ -40,7 +41,8 @@ public sealed class NativeJournalWindow(
     Action saveDivider,
     IAddonEventManager addonEvents,
     Action? openGuide = null,
-    IReadOnlyList<JournalFish>? guideFish = null, Func<JournalFish, GuideDetails>? guideDetails = null) : NativeAddon
+    IReadOnlyList<JournalFish>? guideFish = null, Func<JournalFish, GuideDetails>? guideDetails = null,
+    Func<JournalFish, FishAvailabilityInfo?>? getAvailability = null) : NativeAddon
 {
     private const float HeaderHeight = 28.0f;
     private const float FishSummaryHeight = 61.0f;
@@ -61,6 +63,8 @@ public sealed class NativeJournalWindow(
     private uint selectedFish;
     private bool renderedUncaughtFirst;
     private readonly Dictionary<FishEntryRowNode, uint> fishButtons = new();
+    private readonly List<(FishEntryRowNode Row, JournalFish Fish)> availabilityRows = new();
+    private long nextAvailabilityRefresh;
     private readonly Dictionary<ListButtonNode, JournalRegion> regionButtons = new();
     private readonly Dictionary<ListButtonNode, uint> spotButtons = new();
     private LabelTextNode? detailsHint;
@@ -81,6 +85,7 @@ public sealed class NativeJournalWindow(
     {
         requestedSearchItem = itemId;
         searchText = query;
+        sessionState.SearchText = query;
         if (searchInput is not null) searchInput.String = query;
         searchPending = true;
     }
@@ -116,7 +121,7 @@ public sealed class NativeJournalWindow(
         spotSummary = new LabelTextNode { Height = 24.0f, FontSize = 14, String = "" };
         spotTitle.AttachNode(this);
         spotSummary.AttachNode(this);
-        summaryDivider = new HorizontalLineNode { Height = 7.0f };
+        summaryDivider = new HorizontalLineNode { Height = 2.0f };
         summaryDivider.AttachNode(this);
 
         float regionListHeight = ContentSize.Y - HeaderHeight - (showNormalLogButton || openGuide is not null ? 48.0f : 0.0f);
@@ -125,13 +130,13 @@ public sealed class NativeJournalWindow(
         areaList.ContentNode.FitWidth = false;
         fishList = CreateList(contentOrigin + new Vector2(fishX, HeaderHeight), new Vector2(ContentSize.X - fishX, ContentSize.Y - HeaderHeight));
         detailsList = CreateList(contentOrigin, new Vector2(200, 150));
-        detailsDivider = new HorizontalLineNode { Height = 7.0f };
+        detailsDivider = new HorizontalLineNode { Height = 2.0f };
         detailsList.AttachNode(this);
         detailsDivider.AttachNode(this);
         dividerHandle = new CollisionNode { ShowClickableCursor = false };
         dividerHandle.AddEvent(AtkEventType.MouseDown, () =>
         {
-            if (!configuration.EmbedFishDetails || configuration.LockDetailsDivider) return;
+            if (!configuration.EmbedFishDetails || configuration.IsDividerLocked(0)) return;
             BeginDividerDrag(0);
         });
         dividerHandle.AttachNode(this);
@@ -176,33 +181,42 @@ public sealed class NativeJournalWindow(
         if (!GuideMode) InitializeJournalButton();
         else
         {
+            searchText = sessionState.SearchText;
             searchInput = new TextInputNode {
                 Size = new Vector2(Math.Max(200, ContentSize.X), 28),
                 PlaceholderString = "Search all fish...", MaxCharacters = 100,
-                OnInputComplete = text => { searchText = text.ToString(); searchPending = true; }
+                String = searchText,
+                OnInputComplete = text => { searchText = text.ToString(); sessionState.SearchText = searchText; searchPending = true; }
             };
             searchInput.AttachNode(this);
             searchButton = new TextButtonNode {
                 String = "Search", Size = new Vector2(80, 28),
-                OnClick = () => { searchText = searchInput.String.ToString(); searchPending = true; }
+                OnClick = () => { searchText = searchInput.String.ToString(); sessionState.SearchText = searchText; searchPending = true; }
             };
             searchButton.AttachNode(this);
-            ShowSearchPrompt();
+            if (!string.IsNullOrWhiteSpace(searchText)) searchPending = true;
+            else ShowSearchPrompt();
             LayoutAttachedNodes();
         }
-        var restoredFish = selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == sessionState.SelectedFish);
-        if (restoredFish is not null)
+        // In guide mode, RefreshSearch (fired below via searchPending) clears
+        // details when it (re)builds the result list, so fish selection is
+        // restored there instead, once the matching row actually exists.
+        if (!GuideMode)
         {
-            selectedFish = restoredFish.FishParameterId;
-            UpdateFishSelection();
-            selectedDetails = buildDetails(restoredFish);
-            if (guideDetails is not null) {
-                selectedGuide = guideDetails(restoredFish);
-                guideLocation = selectedGuide.Locations.FirstOrDefault();
-                guidePoles = guideLocation is null ? Array.Empty<FishingPole>() : selectedGuide.GetPoles(guideLocation);
-                guidePole = guidePoles.FirstOrDefault();
+            var restoredFish = selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == sessionState.SelectedFish);
+            if (restoredFish is not null)
+            {
+                selectedFish = restoredFish.FishParameterId;
+                UpdateFishSelection();
+                selectedDetails = buildDetails(restoredFish);
+                if (guideDetails is not null) {
+                    selectedGuide = guideDetails(restoredFish);
+                    guideLocation = selectedGuide.Locations.FirstOrDefault();
+                    guidePoles = guideLocation is null ? Array.Empty<FishingPole>() : selectedGuide.GetPoles(guideLocation);
+                    guidePole = guidePoles.FirstOrDefault();
+                }
+                RenderDetails();
             }
-            RenderDetails();
         }
         RestoreScroll(regionList, sessionState.RegionScroll);
         RestoreScroll(areaList, sessionState.AreaScroll);
@@ -235,6 +249,7 @@ public sealed class NativeJournalWindow(
         if (fishList is null || guideFish is null) return;
         ClearDetails();
         fishButtons.Clear();
+        availabilityRows.Clear();
         fishList.ContentNode.Clear();
         if (string.IsNullOrWhiteSpace(searchText)) {
             ShowSearchPrompt(); fishList.ScrollToStart(); return;
@@ -251,6 +266,12 @@ public sealed class NativeJournalWindow(
                 row?.OnClick?.Invoke();
                 if (row is not null) fishList.ScrollBarNode.ScrollPosition = Math.Max(0, row.Y);
             }
+        }
+        else if (sessionState.SelectedFish != 0) {
+            // Restore whichever fish was selected the last time this search was open.
+            var row = fishButtons.FirstOrDefault(p => p.Value == sessionState.SelectedFish).Key;
+            row?.OnClick?.Invoke();
+            if (row is not null) fishList.ScrollBarNode.ScrollPosition = Math.Max(0, row.Y);
         }
     }
 
@@ -531,7 +552,7 @@ public sealed class NativeJournalWindow(
             detailsDivider.IsVisible = embedded;
             if (dividerHandle is not null)
             {
-                dividerHandle.IsVisible = embedded && !configuration.LockDetailsDivider;
+                dividerHandle.IsVisible = embedded && !configuration.IsDividerLocked(0);
                 dividerHandle.ShowClickableCursor = false;
                 dividerHandle.Position = fishList.Position + new Vector2(0, fishHeight);
                 dividerHandle.Size = new Vector2(fishWidth, 12);
@@ -555,14 +576,14 @@ public sealed class NativeJournalWindow(
         {
             regionDividerHandle.Position = contentOrigin + new Vector2(regionWidth, 0);
             regionDividerHandle.Size = new Vector2(ColumnGap, ContentSize.Y);
-            regionDividerHandle.IsVisible = !configuration.LockRegionDivider;
+            regionDividerHandle.IsVisible = !configuration.IsDividerLocked(1);
             regionDividerHandle.ShowClickableCursor = false;
         }
         if (areaDividerHandle is not null)
         {
             areaDividerHandle.Position = contentOrigin + new Vector2(regionWidth + areaWidth + ColumnGap, 0);
             areaDividerHandle.Size = new Vector2(ColumnGap, ContentSize.Y);
-            areaDividerHandle.IsVisible = !configuration.LockAreaDivider;
+            areaDividerHandle.IsVisible = !configuration.IsDividerLocked(2);
             areaDividerHandle.ShowClickableCursor = false;
         }
         if (normalLogButton is not null)
@@ -616,6 +637,7 @@ public sealed class NativeJournalWindow(
             return;
 
         fishButtons.Clear();
+        availabilityRows.Clear();
         fishList.ContentNode.Clear();
         if (spotTitle is not null) spotTitle.String = spot.Name;
         if (spotSummary is not null)
@@ -637,7 +659,7 @@ public sealed class NativeJournalWindow(
         if (fishList is null)
             return;
         if (fishList.ContentNode.Nodes.Count > 0)
-            fishList.ContentNode.AddNode(new HorizontalLineNode { Height = 7.0f });
+            fishList.ContentNode.AddNode(new HorizontalLineNode { Height = 2.0f });
         fishList.ContentNode.AddNode(new CategoryTextNode { String = $"{heading}   {fish.Count}" });
         if (fish.Count == 0)
         {
@@ -671,6 +693,12 @@ public sealed class NativeJournalWindow(
                 detailsList?.ScrollToStart();
             });
             fishButtons.Add(row, entry.FishParameterId);
+            var availability = getAvailability?.Invoke(entry);
+            if (availability is not null)
+            {
+                row.SetAvailability(availability.AvailableNow, availability.BadgeText, availability.Tooltip);
+                availabilityRows.Add((row, entry));
+            }
             if (GuideMode) row.AddFavoriteStar(configuration.FavoriteFishItemIds.Contains(entry.ItemId), () => {
                 bool favorite = configuration.FavoriteFishItemIds.Add(entry.ItemId);
                 if (!favorite) configuration.FavoriteFishItemIds.Remove(entry.ItemId);
@@ -846,9 +874,9 @@ public sealed class NativeJournalWindow(
     {
         var line = new VerticalLineNode
         {
-            Position = contentOrigin + new Vector2(x - (emphasized ? 3.0f : 1.0f), 0),
+            Position = contentOrigin + new Vector2(x - 1.0f, 0),
             Height = ContentSize.Y,
-            Width = emphasized ? 7.0f : 3.0f,
+            Width = 2.0f,
         };
         line.AttachNode(this);
         return line;
@@ -866,7 +894,7 @@ public sealed class NativeJournalWindow(
     {
         if (line is null)
             return;
-        line.Position = contentOrigin + new Vector2(x - (emphasized ? 3.0f : 1.0f), 0.0f);
+        line.Position = contentOrigin + new Vector2(x - 1.0f, 0.0f);
         line.Height = ContentSize.Y;
     }
 
@@ -891,6 +919,15 @@ public sealed class NativeJournalWindow(
         if (searchPending) {
             searchPending = false;
             RefreshSearch();
+        }
+        if (getAvailability is not null && availabilityRows.Count > 0 && Environment.TickCount64 >= nextAvailabilityRefresh)
+        {
+            nextAvailabilityRefresh = Environment.TickCount64 + 30000;
+            foreach (var (row, fish) in availabilityRows)
+            {
+                var info = getAvailability(fish);
+                if (info is not null) row.SetAvailability(info.AvailableNow, info.BadgeText, info.Tooltip);
+            }
         }
         var framework = Framework.Instance();
         var mouse = framework == null ? default : framework->CursorInputs;

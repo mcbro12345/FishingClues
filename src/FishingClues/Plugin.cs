@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
+using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Command;
 using Dalamud.Game.Gui.ContextMenu;
 using Dalamud.Game.NativeWrapper;
@@ -58,6 +59,10 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
     private readonly DalamudSettingsWindow dalamudSettings;
     private readonly DiagnosticWindow diagnosticWindow;
     private readonly NativeJournalSessionState nativeJournalState = new();
+    private readonly NativeJournalSessionState nativeGuideState = new();
+    private bool nativeJournalWasOpen;
+    private bool guideAutoClosedByLog;
+    private bool journalKeybindWasDown;
     private NativeJournalWindow? nativeJournal;
     private NativeJournalWindow? nativeGuide;
     private FishClueWindow? nativeClues;
@@ -95,6 +100,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
     [PluginService] private static ITextureProvider TextureProvider { get; set; } = null!;
     [PluginService] private static IPluginLog Log { get; set; } = null!;
     [PluginService] private static IGameInteropProvider GameInteropProvider { get; set; } = null!;
+    [PluginService] private static IKeyState KeyState { get; set; } = null!;
 
     public Plugin()
     {
@@ -113,7 +119,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         dalamudJournal = new DalamudJournalWindow(GetJournal, OpenFish, OpenNormalFishingLog, TextureProvider, configuration, BuildFishSection,
             () => PluginInterface.SavePluginConfig(configuration));
         dalamudClues = new DalamudClueWindow();
-        dalamudSettings = new DalamudSettingsWindow(configuration, SaveConfiguration, ApplyLiveNativeLayout, LogJournalDiagnostics, () => { _ = RefreshFishDataAsync(); }, () => dataRefreshBusy, () => dataRefreshStatus);
+        dalamudSettings = new DalamudSettingsWindow(configuration, SaveConfiguration, ApplyLiveNativeLayout, LogJournalDiagnostics, () => { _ = RefreshFishDataAsync(); }, () => dataRefreshBusy, () => dataRefreshStatus, KeyState);
         diagnosticWindow = new DiagnosticWindow(LogJournalDiagnostics);
         windowSystem.AddWindow(diagnosticWindow);
         windowSystem.AddWindow(dalamudJournal);
@@ -121,7 +127,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         windowSystem.AddWindow(dalamudSettings);
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the native Fishing Clues journal. Use '/fishingclues settings' for options.",
+            HelpMessage = "Open the native Fishing Clues journal.\nUse '/fishingclues settings' for options.",
         });
         ContextMenu.OnMenuOpened += OnMenuOpened;
         AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "FishingNote", OnFishingNoteIntercept);
@@ -160,8 +166,12 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         mainCommandHook!.Original(module, command);
     }
 
-    public void Dispose()
+    public unsafe void Dispose()
     {
+        // Note whether our custom journal is currently standing in for the
+        // normal Fishing Log, so it can be restored once our interception
+        // hook is gone below.
+        bool wasReplacingLog = configuration.ReplaceNormalFishingLog && nativeJournal?.IsOpen == true;
         disposed = true;
         ReleaseItemMenuData();
         refreshCancellation.Cancel();
@@ -181,6 +191,13 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
             nativeGuide?.Dispose();
             nativeClues?.Dispose();
             KamiToolKitLibrary.Dispose();
+        }
+        if (wasReplacingLog && fishingLogCommandId != 0)
+        {
+            // The interception hook above is already gone, so this reaches
+            // the game's own Fishing Log implementation directly.
+            UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
+            if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
         }
     }
 
@@ -301,6 +318,33 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         }
 
         ObserveVanillaRegionLabels();
+        bool journalOpenNow = nativeJournal?.IsOpen == true;
+        if (nativeJournalWasOpen && !journalOpenNow)
+        {
+            if (nativeGuide?.IsOpen == true)
+            {
+                guideAutoClosedByLog = true;
+                nativeGuide.Close();
+            }
+        }
+        else if (journalOpenNow && guideAutoClosedByLog)
+        {
+            guideAutoClosedByLog = false;
+            _ = OpenGuideAsync();
+        }
+        nativeJournalWasOpen = journalOpenNow;
+        if (configuration.JournalKeybindEnabled && configuration.JournalKeybindKey != 0 && !configuration.ReplaceNormalFishingLog)
+        {
+            var key = (VirtualKey)configuration.JournalKeybindKey;
+            bool down = KeyState.IsVirtualKeyValid(key) && KeyState[key]
+                && (!configuration.JournalKeybindCtrl || KeyState[VirtualKey.CONTROL])
+                && (!configuration.JournalKeybindAlt || KeyState[VirtualKey.MENU])
+                && (!configuration.JournalKeybindShift || KeyState[VirtualKey.SHIFT]);
+            if (down && !journalKeybindWasDown && ClientState.IsLoggedIn)
+                OpenJournal();
+            journalKeybindWasDown = down;
+        }
+        else journalKeybindWasDown = false;
         if (menuOpenRequested)
         {
             menuOpenRequested = false;
@@ -501,7 +545,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
                     OpenFish, OpenNormalFishingLog, configuration, BuildFishSection,
                     ex => Log.Error(ex, "Native journal button failed; using the text fallback."),
                     () => PluginInterface.SavePluginConfig(configuration), AddonEvents,
-                    () => _ = OpenGuideAsync(), guideDetails: BuildGuideDetails)
+                    () => _ = OpenGuideAsync(), guideDetails: BuildGuideDetails, getAvailability: GetFishAvailability)
                 {
                     InternalName = "FishingCluesJournalNative",
                     Title = "Fishing Log",
@@ -520,6 +564,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
 
     private async Task OpenGuideAsync(string? query = null, uint selectItemId = 0)
     {
+        guideAutoClosedByLog = false;
         try {
             await nativeUiInitialization;
             await Framework.Run(() => {
@@ -547,10 +592,11 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
                 var fish = known.Values.Select(f => f with { IsRevealed = true, SpotId = 0 })
                     .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToArray();
                 nativeGuide?.Dispose();
-                nativeGuide = new NativeJournalWindow(regions, new NativeJournalSessionState(),
+                nativeGuide = new NativeJournalWindow(regions, nativeGuideState,
                     130, 240, 200, false, OpenFish, OpenNormalFishingLog, configuration, f => new FishClueSection(f.Name, Array.Empty<string>()),
                     ex => Log.Error(ex, "Fish guide failed."),
-                    () => PluginInterface.SavePluginConfig(configuration), AddonEvents, guideFish: fish, guideDetails: BuildGuideDetails) {
+                    () => PluginInterface.SavePluginConfig(configuration), AddonEvents, guideFish: fish, guideDetails: BuildGuideDetails,
+                    getAvailability: GetFishAvailability) {
                     InternalName = "FishingCluesGuideNative", Title = "Fish Guide", Subtitle = "Fishing Clues",
                     Size = new Vector2(560, 650), ContentPadding = new Vector2(14, 12), RememberClosePosition = true,
                 };

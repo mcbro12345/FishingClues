@@ -46,7 +46,7 @@ public sealed class FishClueWindow(IReadOnlyList<FishClueSection> sections) : Na
             {
                 scrolling.ContentNode.AddNode(new HorizontalLineNode
                 {
-                    Height = 6.0f,
+                    Height = 2.0f,
                 });
             }
 

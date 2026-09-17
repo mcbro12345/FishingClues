@@ -11,6 +11,7 @@ public sealed class FishEntryRowNode : ListButtonNode
     private readonly IconImageNode fishIcon;
     private readonly LabelTextNode unknownIcon;
     private LabelTextNode? favoriteButton;
+    private LabelTextNode? availabilityBadge;
     private bool favoriteHovered;
 
     public FishEntryRowNode(JournalFish fish, string label, Action onClick)
@@ -71,11 +72,37 @@ public sealed class FishEntryRowNode : ListButtonNode
         OnSizeChanged();
     }
 
+    public void SetAvailability(bool available, string text, string tooltip)
+    {
+        if (availabilityBadge is null)
+        {
+            availabilityBadge = new LabelTextNode
+            {
+                Size = new Vector2(78.0f, 20.0f),
+                FontSize = 12,
+                AlignmentType = AlignmentType.Right,
+                TextFlags = TextFlags.Ellipsis,
+            };
+            availabilityBadge.AttachNode(this, NodePosition.AfterAllSiblings);
+            OnSizeChanged();
+        }
+        availabilityBadge.String = text;
+        availabilityBadge.TextColor = available ? new Vector4(0.45f, 0.95f, 0.45f, 1f) : new Vector4(0.95f, 0.4f, 0.4f, 1f);
+        availabilityBadge.TextTooltip = tooltip;
+    }
+
     protected override void OnSizeChanged()
     {
         base.OnSizeChanged();
+        float rightReserve = favoriteButton is null ? 54 : 88;
+        if (availabilityBadge is not null) rightReserve += 82;
         LabelNode.Position = new Vector2(48.0f, 10.0f);
-        LabelNode.Size = new Vector2(Math.Max(20.0f, Width - (favoriteButton is null ? 54 : 88)), 28.0f);
+        LabelNode.Size = new Vector2(Math.Max(20.0f, Width - rightReserve), 28.0f);
         if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(48, Width - 30), 8);
+        if (availabilityBadge is not null)
+        {
+            float badgeRight = Width - (favoriteButton is null ? 8.0f : 38.0f);
+            availabilityBadge.Position = new Vector2(Math.Max(48.0f, badgeRight - 78.0f), 12.0f);
+        }
     }
 }

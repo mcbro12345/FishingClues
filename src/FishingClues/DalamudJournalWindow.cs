@@ -71,7 +71,7 @@ public sealed class DalamudJournalWindow(
     {
         Vector2 position = ImGui.GetCursorScreenPos();
         float height = Math.Max(1, ImGui.GetContentRegionAvail().Y);
-        if (configuration.LockJournalDividers) ImGui.Dummy(new Vector2(6, height));
+        if (configuration.IsDividerLocked(region ? 1 : 2)) ImGui.Dummy(new Vector2(6, height));
         else
         {
             ImGui.InvisibleButton(id, new Vector2(6, height));
@@ -174,7 +174,7 @@ public sealed class DalamudJournalWindow(
         {
             Vector2 dividerPosition = ImGui.GetCursorScreenPos();
             float dividerWidth = Math.Max(1, ImGui.GetContentRegionAvail().X);
-            if (configuration.LockJournalDividers) ImGui.Dummy(new Vector2(dividerWidth, 8));
+            if (configuration.IsDividerLocked(0)) ImGui.Dummy(new Vector2(dividerWidth, 8));
             else
             {
                 ImGui.InvisibleButton("details-divider", new Vector2(dividerWidth, 8));

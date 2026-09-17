@@ -25,25 +25,15 @@ public sealed class Configuration : IPluginConfiguration
     public bool AutoRefreshFishData { get; set; } = true;
     public bool UncaughtFishFirst { get; set; }
     public bool LockJournalDividers { get; set; }
-    public bool LockRegionDivider { get; set; }
-    public bool LockAreaDivider { get; set; }
-    public bool LockDetailsDivider { get; set; }
-    public bool IsDividerLocked(int kind) => kind switch
-    {
-        1 => LockRegionDivider,
-        2 => LockAreaDivider,
-        _ => LockDetailsDivider,
-    };
+    // Only the fish/details divider (kind 0) is ever user-adjustable; the
+    // region/area dividers (kind 1/2) stay locked in both the journal and the
+    // fish search.
+    public bool IsDividerLocked(int kind) => kind != 0 || LockJournalDividers;
 
     public void ApplySimplifiedJournalSettings()
     {
         RevealedFish ??= new();
         FavoriteFishItemIds ??= new();
-        if (Version < 8)
-        {
-            LockRegionDivider = LockAreaDivider = LockDetailsDivider = LockJournalDividers;
-            Version = 8;
-        }
         UiMode = JournalUiMode.Native;
         EmbedFishDetails = true;
         UseNativeFishDetails = false;
@@ -52,4 +42,9 @@ public sealed class Configuration : IPluginConfiguration
     public float DetailsHeightRatio { get; set; } = 0.38f;
     public bool ShowOpenNormalLogButton { get; set; } = true;
     public bool ReplaceNormalFishingLog { get; set; }
+    public bool JournalKeybindEnabled { get; set; }
+    public int JournalKeybindKey { get; set; }
+    public bool JournalKeybindCtrl { get; set; }
+    public bool JournalKeybindAlt { get; set; }
+    public bool JournalKeybindShift { get; set; }
 }
