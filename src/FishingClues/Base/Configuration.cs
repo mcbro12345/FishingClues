@@ -4,10 +4,13 @@ namespace FishingClues.Base;
 
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 13;
+    public int Version { get; set; } = 14;
     public System.Collections.Generic.HashSet<uint> FavoriteFishItemIds { get; set; } = new();
     public System.Collections.Generic.Dictionary<ulong, System.Collections.Generic.HashSet<uint>> RevealedFish { get; set; } = new();
-    public float NativeWindowWidth { get; set; } = 1050.0f;
+    // Wide enough that the longest real availability badge (time + weather-after-weather,
+    // each with several options - about 117 characters) fits on one line at the fish
+    // list's default column width.
+    public float NativeWindowWidth { get; set; } = 1150.0f;
     public float NativeWindowHeight { get; set; } = 680.0f;
     public float NativeRegionWidth { get; set; } = 162.0f;
     public float NativeAreaWidth { get; set; } = 263.0f;
