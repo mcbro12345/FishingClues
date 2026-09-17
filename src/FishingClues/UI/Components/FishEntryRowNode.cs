@@ -12,6 +12,8 @@ public sealed class FishEntryRowNode : ListButtonNode
 {
     private const float CompactHeight = 44.0f;
     private const int WrappedBadgeTextLengthThreshold = 16;
+    private const uint MaxBadgeFontSize = 12;
+    private const uint MinBadgeFontSize = 8;
 
     private const float IconSize = 38.0f;
 
@@ -84,12 +86,14 @@ public sealed class FishEntryRowNode : ListButtonNode
         if (availabilityBadge is null)
         {
             // default LineSpacing (24) is tuned for 14pt text, too tall for our 12pt badge
-            availabilityBadge = new LabelTextNode { FontSize = 12, LineSpacing = 14 };
+            availabilityBadge = new LabelTextNode { FontSize = MaxBadgeFontSize, LineSpacing = 14 };
             availabilityBadge.AttachNode(this, NodePosition.AfterAllSiblings);
         }
         availabilityWrapped = wrapped;
+        // long badges used to word-wrap onto a second line below the name, but the row's
+        // fixed height clipped that second line - shrink the font to fit one line instead.
         availabilityBadge.AlignmentType = wrapped ? AlignmentType.Left : AlignmentType.Right;
-        availabilityBadge.TextFlags = wrapped ? TextFlags.WordWrap | TextFlags.MultiLine : TextFlags.Ellipsis;
+        availabilityBadge.TextFlags = TextFlags.Ellipsis;
         availabilityBadge.TextColor = available ? new Vector4(0.45f, 0.95f, 0.45f, 1f) : new Vector4(0.95f, 0.4f, 0.4f, 1f);
         availabilityBadge.TextTooltip = tooltip;
         availabilityBadge.String = text;
@@ -115,6 +119,7 @@ public sealed class FishEntryRowNode : ListButtonNode
 
             if (availabilityBadge is not null)
             {
+                availabilityBadge.FontSize = MaxBadgeFontSize;
                 availabilityBadge.Size = new Vector2(78.0f, 20.0f);
                 float badgeRight = Width - (favoriteButton is null ? 8.0f : 38.0f);
                 availabilityBadge.Position = new Vector2(Math.Max(48.0f, badgeRight - 78.0f), 12.0f);
@@ -125,6 +130,7 @@ public sealed class FishEntryRowNode : ListButtonNode
 
         float wrappedWidth = Math.Max(80.0f, Width - 58.0f);
         if (Math.Abs(availabilityBadge!.Width - wrappedWidth) > 0.5f) availabilityBadge.Width = wrappedWidth;
+        ShrinkBadgeToFit(wrappedWidth);
         float textHeight = Math.Max(14.0f, availabilityBadge.GetTextDrawSize(false).Y);
         availabilityBadge.Height = textHeight;
         // the 28px name box is taller than the glyphs actually drawn in it
@@ -147,5 +153,19 @@ public sealed class FishEntryRowNode : ListButtonNode
         availabilityBadge.Position = new Vector2(50.0f, nameY + nameHeight + lineGap);
 
         if (Math.Abs(Height - desiredHeight) > 0.5f) Height = desiredHeight;
+    }
+
+    // Shrinks the availability badge's font until its text fits on one line within
+    // the given width, instead of wrapping onto a second line the row can't show in full.
+    private void ShrinkBadgeToFit(float availableWidth)
+    {
+        if (availabilityBadge is null) return;
+        uint fontSize = MaxBadgeFontSize;
+        availabilityBadge.FontSize = fontSize;
+        while (fontSize > MinBadgeFontSize && availabilityBadge.GetTextDrawSize(false).X > availableWidth)
+        {
+            fontSize--;
+            availabilityBadge.FontSize = fontSize;
+        }
     }
 }
