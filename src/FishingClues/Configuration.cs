@@ -23,6 +23,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool UseNativeFishDetails { get; set; }
     public bool EmbedFishDetails { get; set; } = true;
     public bool AutoRefreshFishData { get; set; } = true;
+    public bool DisableAvailabilityCountdown { get; set; }
     public bool UncaughtFishFirst { get; set; } = true;
     public bool LockJournalDividers { get; set; }
     // Only the fish/details divider (kind 0) is ever user-adjustable; the

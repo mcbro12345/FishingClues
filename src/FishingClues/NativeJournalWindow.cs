@@ -242,6 +242,12 @@ public sealed class NativeJournalWindow(
             String = "No favorites yet. Search for a fish and click its star to save it."
         });
         fishList.RecalculateSizes();
+        // RecalculateSizes() only updates ContentNode's own Width (e.g. to
+        // account for a scrollbar); it doesn't re-run FitWidth on the rows
+        // already inside it. Force that now so wrapped availability badges
+        // measure against the real, current column width instead of a stale
+        // one left over from before the scrollbar appeared or disappeared.
+        fishList.ContentNode.RecalculateLayout();
     }
 
     private void RefreshSearch()
@@ -257,6 +263,12 @@ public sealed class NativeJournalWindow(
         var matches = guideFish.Where(f => f.Name.Contains(searchText.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
         AddFishGroup($"FISH - {matches.Length} matches", matches, true);
         fishList.RecalculateSizes();
+        // RecalculateSizes() only updates ContentNode's own Width (e.g. to
+        // account for a scrollbar); it doesn't re-run FitWidth on the rows
+        // already inside it. Force that now so wrapped availability badges
+        // measure against the real, current column width instead of a stale
+        // one left over from before the scrollbar appeared or disappeared.
+        fishList.ContentNode.RecalculateLayout();
         fishList.ScrollToStart();
         if (requestedSearchItem != 0) {
             var match = matches.FirstOrDefault(f => f.ItemId == requestedSearchItem);
@@ -406,6 +418,10 @@ public sealed class NativeJournalWindow(
                 }
                 foreach (var header in areaHeaders.OfType<AnimatedAreaHeaderNode>()) header.RecalculateLayout();
                 areaList?.RecalculateSizes();
+                // Expanding/collapsing can add or remove the scrollbar, which
+                // changes the column's usable width; keep the dropdowns in
+                // sync with it instead of leaving them at a stale width.
+                ApplyAreaDropdownWidths();
             };
             areaHeaders.Add(areaDropDown);
             foreach (JournalSpot spot in area.Spots)
@@ -436,9 +452,20 @@ public sealed class NativeJournalWindow(
             areaList.ContentNode.AddNode(areaDropDown);
         }
         areaList.RecalculateSizes();
+        // Widths above were computed against whatever content width the
+        // area list had left over from the previously-shown region; now
+        // that this region's content size is settled, recompute them so
+        // dropdown width doesn't drift between region switches.
+        ApplyAreaDropdownWidths();
         fishButtons.Clear();
         fishList.ContentNode.Clear();
         fishList.RecalculateSizes();
+        // RecalculateSizes() only updates ContentNode's own Width (e.g. to
+        // account for a scrollbar); it doesn't re-run FitWidth on the rows
+        // already inside it. Force that now so wrapped availability badges
+        // measure against the real, current column width instead of a stale
+        // one left over from before the scrollbar appeared or disappeared.
+        fishList.ContentNode.RecalculateLayout();
 
         JournalSpot? restoredSpot = region.Areas.SelectMany(a => a.Spots)
             .FirstOrDefault(spot => spot.IsUnlocked && spot.Id == sessionState.SelectedSpot);
@@ -462,6 +489,9 @@ public sealed class NativeJournalWindow(
         dropdownWidthSetting = dropdownWidth;
         showNormalLogButton = configuredShowButton;
         Size = new Vector2(windowWidth, windowHeight);
+        // A settings change (e.g. toggling the availability countdown) should
+        // be visible right away rather than waiting for the periodic refresh.
+        nextAvailabilityRefresh = 0;
         if (!IsOpen)
             return;
 
@@ -542,6 +572,12 @@ public sealed class NativeJournalWindow(
         float fishBodyHeight = listHeight - (GuideMode ? 8 : FishSummaryHeight);
         fishList.Position = contentOrigin + new Vector2(fishX, HeaderHeight + (GuideMode ? 8 : FishSummaryHeight));
         fishList.Size = new Vector2(fishWidth, fishBodyHeight);
+        // Setting Size only updates ContentNode's own Width; it doesn't re-run
+        // FitWidth on the rows already inside it, so force that now. Without
+        // this, any settings change that reaches this method (not just an
+        // actual resize) can leave wrapped availability badges measuring
+        // against a stale column width.
+        fishList.ContentNode.RecalculateLayout();
         if (detailsList is not null && detailsDivider is not null)
         {
             bool embedded = configuration.EmbedFishDetails;
@@ -601,6 +637,12 @@ public sealed class NativeJournalWindow(
         ApplyAreaDropdownWidths();
         regionList.RecalculateSizes();
         fishList.RecalculateSizes();
+        // RecalculateSizes() only updates ContentNode's own Width (e.g. to
+        // account for a scrollbar); it doesn't re-run FitWidth on the rows
+        // already inside it. Force that now so wrapped availability badges
+        // measure against the real, current column width instead of a stale
+        // one left over from before the scrollbar appeared or disappeared.
+        fishList.ContentNode.RecalculateLayout();
         // Native ellipsis can replace the text buffer. Always restore from the
         // journal model after width/layout changes, never from the shortened label.
         foreach (var pair in regionButtons)
@@ -651,6 +693,12 @@ public sealed class NativeJournalWindow(
         if (!renderedUncaughtFirst && missing.Count > 0)
             AddFishGroup("NOT CAUGHT", missing, revealNames: false);
         fishList.RecalculateSizes();
+        // RecalculateSizes() only updates ContentNode's own Width (e.g. to
+        // account for a scrollbar); it doesn't re-run FitWidth on the rows
+        // already inside it. Force that now so wrapped availability badges
+        // measure against the real, current column width instead of a stale
+        // one left over from before the scrollbar appeared or disappeared.
+        fishList.ContentNode.RecalculateLayout();
         fishList.ScrollToStart();
     }
 
@@ -928,6 +976,11 @@ public sealed class NativeJournalWindow(
                 var info = getAvailability(fish);
                 if (info is not null) row.SetAvailability(info.AvailableNow, info.BadgeText, info.Tooltip);
             }
+            // Switching between a short badge and a wrapped full-sentence one
+            // changes row heights; re-stack the list so rows don't overlap,
+            // and re-run FitWidth so wrap widths reflect the real column width.
+            fishList?.RecalculateSizes();
+            fishList?.ContentNode.RecalculateLayout();
         }
         var framework = Framework.Instance();
         var mouse = framework == null ? default : framework->CursorInputs;

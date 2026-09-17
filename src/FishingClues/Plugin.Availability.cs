@@ -51,7 +51,13 @@ public sealed partial class Plugin
             if (timeGated) met.Add(FormatTime(condition.StartHour, condition.EndHour));
             if (WeatherClause() is string metWeather) met.Add(metWeather);
             string availableTooltip = met.Count == 0 ? "Now available." : $"Now available due to {string.Join(" and ", met)}.";
-            return new FishAvailabilityInfo(true, "Up now", availableTooltip);
+
+            if (configuration.DisableAvailabilityCountdown)
+                return new FishAvailabilityInfo(true, availableTooltip, availableTooltip);
+
+            long? end = FindAvailabilityEnd(condition, weatherRateId, weatherGated, prevWeatherGated, timeGated, now);
+            string availableCountdown = end is long endTime ? FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, endTime - now))) : "Up now";
+            return new FishAvailabilityInfo(true, $"{availableCountdown} | {availableTooltip}", availableTooltip);
         }
 
         var waitingFor = new List<string>();
@@ -60,13 +66,12 @@ public sealed partial class Plugin
         string waitingText = waitingFor.Count == 0 ? "conditions to line up" : string.Join(" and ", waitingFor);
         string tooltip = $"Waiting for {waitingText}.";
 
+        if (configuration.DisableAvailabilityCountdown)
+            return new FishAvailabilityInfo(false, tooltip, tooltip);
+
         long? next = FindNextAvailability(condition, weatherRateId, weatherGated, prevWeatherGated, now);
-        if (next is long nextTime)
-        {
-            TimeSpan span = TimeSpan.FromSeconds(Math.Max(0, nextTime - now));
-            return new FishAvailabilityInfo(false, FormatCountdown(span), tooltip);
-        }
-        return new FishAvailabilityInfo(false, "Not soon", tooltip);
+        string waitingCountdown = next is long nextTime ? FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, nextTime - now))) : "Not soon";
+        return new FishAvailabilityInfo(false, $"{waitingCountdown} | {tooltip}", tooltip);
     }
 
     private uint? ResolveTerritoryId(JournalFish fish)
@@ -113,6 +118,25 @@ public sealed partial class Plugin
         return null;
     }
 
+    private long? FindAvailabilityEnd(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, bool timeGated, long now)
+    {
+        long windowStart = EorzeaWeather.WindowStart(now);
+        for (int i = 0; i < MaxAvailabilityWindowsToScan; i++)
+        {
+            long ws = windowStart + i * EorzeaWeather.SecondsPerWeatherWindow;
+            long windowEnd = ws + EorzeaWeather.SecondsPerWeatherWindow;
+            bool weatherOk = !weatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws)) is uint w && condition.Weather.Contains(w));
+            bool prevOk = !prevWeatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws - EorzeaWeather.SecondsPerWeatherWindow)) is uint pw && condition.PreviousWeather.Contains(pw));
+            if (!weatherOk || !prevOk)
+                return Math.Max(now, ws); // Weather (or previous weather) lapses at this window's start.
+            if (!timeGated)
+                continue; // No daily time restriction; availability only ends when weather changes.
+            long? end = TimeWindowEndWithin(ws, condition.StartHour, condition.EndHour, i == 0 ? now : ws, windowEnd);
+            if (end is long t) return t;
+        }
+        return null;
+    }
+
     private static bool InTimeWindow(double hour, double start, double end)
     {
         if (start == 0 && end == 24) return true;
@@ -141,6 +165,34 @@ public sealed partial class Plugin
         else { Consider(startHour, 24); Consider(0, endHour); }
 
         return candidates.Count == 0 ? null : candidates.Min();
+    }
+
+    // Mirrors FirstTimeMatchInWindow, but finds where the interval that is
+    // already active at earliestAllowed ends, instead of where the next match
+    // begins. Each weather window is exactly 8 Eorzea hours (SecondsPerWeatherWindow
+    // == 8 * SecondsPerEorzeaHour), so an end that lands exactly on the window's own
+    // boundary is indistinguishable from "keeps going" and must not be reported as
+    // a real end - the caller re-checks weather for the next window instead.
+    private static long? TimeWindowEndWithin(long windowStart, double startHour, double endHour, long earliestAllowed, long windowEnd)
+    {
+        if (startHour == 0 && endHour == 24) return null; // Never actually ends on its own.
+
+        double bandStart = EorzeaWeather.EorzeaHourOfDay(windowStart);
+        double bandEnd = bandStart + 8;
+
+        long? EndOf(double s, double e)
+        {
+            double overlapStart = Math.Max(s, bandStart);
+            double overlapEnd = Math.Min(e, bandEnd);
+            if (overlapEnd <= overlapStart) return null;
+            long candidateStart = windowStart + (long)Math.Round((overlapStart - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
+            long candidateEnd = windowStart + (long)Math.Round((overlapEnd - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
+            if (candidateStart > earliestAllowed || candidateEnd <= earliestAllowed) return null;
+            return candidateEnd;
+        }
+
+        long? end = startHour <= endHour ? EndOf(startHour, endHour) : EndOf(startHour, 24) ?? EndOf(0, endHour);
+        return end is long e && e < windowEnd ? e : null;
     }
 
     private static string FormatCountdown(TimeSpan span)

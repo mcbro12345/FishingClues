@@ -50,6 +50,13 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             configuration.ShowOpenNormalLogButton = showButton;
             SaveLayout();
         }
+        bool disableCountdown = configuration.DisableAvailabilityCountdown;
+        if (ImGui.Checkbox("Disable the availability countdown timer", ref disableCountdown))
+        {
+            configuration.DisableAvailabilityCountdown = disableCountdown;
+            SaveLayout();
+        }
+        DrawWrappedHint("Disables the timer.");
         bool uncaughtFirst = configuration.UncaughtFishFirst;
         if (ImGui.Checkbox("Uncaught fish first", ref uncaughtFirst))
         {
@@ -65,7 +72,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             configuration.LockJournalDividers = locked;
             SaveLayout();
         }
-        ImGui.TextDisabled("Uncheck to resize the fish / details divider directly in the journal or fish search.");
+        DrawWrappedHint("Uncheck to resize the fish / details divider directly in the journal or fish search.");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.TextDisabled("FISHING DATA");
@@ -115,7 +122,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
         {
             capturingKeybind = true;
         }
-        ImGui.TextDisabled("Only usable while the normal Fishing Log is not being replaced.");
+        DrawWrappedHint("Only usable while the normal Fishing Log is not being replaced.");
     }
 
     private string DescribeKeybind()
@@ -133,5 +140,14 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
     {
         save();
         applyNativeLayout();
+    }
+
+    // ImGui.TextDisabled doesn't wrap; use this for any dimmed description
+    // line long enough to reach the window edge.
+    private static void DrawWrappedHint(string text)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
+        ImGui.TextWrapped(text);
+        ImGui.PopStyleColor();
     }
 }
