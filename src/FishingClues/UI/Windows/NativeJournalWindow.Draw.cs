@@ -150,6 +150,7 @@ public sealed partial class NativeJournalWindow
                 animating |= header.Tick();
             float previousHeight = areaList.ContentNode.Height;
             areaList.ContentNode.RecalculateLayout();
+            ReapplyDropdownLeftInset();
             if (animating || previousHeight != areaList.ContentNode.Height)
             {
                 areaList.RecalculateSizes();

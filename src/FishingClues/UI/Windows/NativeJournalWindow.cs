@@ -516,12 +516,20 @@ public sealed partial class NativeJournalWindow(
         foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
             header.Width = width;
         areaList.ContentNode.RecalculateLayout();
-        // the list above just reset every header back to X=0 (its default left
-        // alignment) - reapply the left inset now that it's the last word on X
+        ReapplyDropdownLeftInset();
+        areaList.RecalculateSizes();
+    }
+
+    // areaList.ContentNode.RecalculateLayout() always resets every header back to
+    // X=0 (its default left alignment), both here and in the per-frame animation
+    // tick in OnDraw - reapply the left inset every time that call runs, or it
+    // snaps back to 0 (and the dropdown becomes unclickable at its real position).
+    private void ReapplyDropdownLeftInset()
+    {
+        if (areaList is null) return;
         float leftInset = EffectiveLeftInset();
         foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
             header.X = leftInset;
-        areaList.RecalculateSizes();
     }
 
     private ScrollingNode<JournalListNode> CreateList(Vector2 position, Vector2 size)

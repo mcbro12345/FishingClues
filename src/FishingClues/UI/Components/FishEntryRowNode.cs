@@ -126,7 +126,15 @@ public sealed class FishEntryRowNode : ListButtonNode
         }
 
         float wrappedWidth = Math.Max(80.0f, Width - 58.0f);
-        if (Math.Abs(availabilityBadge!.Width - wrappedWidth) > 0.5f) availabilityBadge.Width = wrappedWidth;
+        if (Math.Abs(availabilityBadge!.Width - wrappedWidth) > 0.5f)
+        {
+            availabilityBadge.Width = wrappedWidth;
+            // the native text node only re-wraps its text when the text itself is
+            // re-set, not when Width changes on its own - without this, the badge
+            // keeps whatever line breaks it had at its old width and can render as
+            // a single clipped line even though its box is now the right size.
+            availabilityBadge.String = availabilityBadge.String;
+        }
         float textHeight = Math.Max(14.0f, availabilityBadge.GetTextDrawSize(false).Y);
         availabilityBadge.Height = textHeight;
         // the 28px name box is taller than the glyphs actually drawn in it
