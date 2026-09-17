@@ -31,9 +31,6 @@ using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-// The entry points for every window the plugin can put on screen: the
-// journal, the settings panel, the fish guide, and the clue popups for a
-// single fish or a batch of hidden ones.
 public sealed partial class Plugin
 {
     private void OpenJournal()
@@ -41,19 +38,11 @@ public sealed partial class Plugin
         normalLogReturnPending = false;
         journalCache = null;
         lastJournalBuild = 0;
-        if (configuration.UiMode == JournalUiMode.Dalamud)
-            dalamudJournal.IsOpen = true;
-        else
-            _ = OpenNativeJournalAsync();
+        _ = OpenNativeJournalAsync();
     }
 
     private void ToggleReplacementJournal()
     {
-        if (configuration.UiMode == JournalUiMode.Dalamud)
-        {
-            dalamudJournal.IsOpen = !dalamudJournal.IsOpen;
-            return;
-        }
         if (nativeJournal?.IsOpen == true)
             nativeJournal.Close();
         else
@@ -62,11 +51,8 @@ public sealed partial class Plugin
 
     private void OpenSettings() => dalamudSettings.IsOpen = true;
 
-    // The Dalamud journal re-reads GetJournal() every draw, so dropping the
-    // cache is enough for it. The native journal and guide build their fish
-    // list once from whatever regions they were constructed with, so a
-    // content change (not just a layout one) needs either of them, if open,
-    // torn down and reopened to actually show it.
+    // journal/guide windows build their fish list once at construction, so
+    // a content change needs them torn down and reopened, not just redrawn
     private void RefreshJournalContents()
     {
         journalCache = null;
@@ -117,7 +103,6 @@ public sealed partial class Plugin
                 var regions = GetJournal();
                 var known = regions.SelectMany(r => r.Areas).SelectMany(a => a.Spots).SelectMany(s => s.Fish)
                     .GroupBy(f => f.ItemId).ToDictionary(g => g.Key, g => g.First());
-                // Include game fish even if no unlocked or known journal spot references them.
                 foreach (var row in DataManager.GetExcelSheet<FishParameterSheet>()) {
                     if (row.Item.RowId == 0 || known.ContainsKey(row.Item.RowId)) continue;
                     if (!DataManager.GetExcelSheet<ItemSheet>().TryGetRow(row.Item.RowId, out var item)) continue;
@@ -167,36 +152,5 @@ public sealed partial class Plugin
         OpenSections(sections);
     }
 
-    private void OpenSections(IReadOnlyList<FishClueSection> sections)
-    {
-        if (!configuration.UseNativeFishDetails)
-        {
-            dalamudClues.Show(sections);
-            return;
-        }
-        _ = OpenNativeCluesAsync(sections);
-    }
-
-    private async Task OpenNativeCluesAsync(IReadOnlyList<FishClueSection> sections)
-    {
-        try
-        {
-            await nativeUiInitialization;
-            await Framework.Run(() =>
-            {
-                nativeClues?.Dispose();
-                nativeClues = new FishClueWindow(sections)
-                {
-                    InternalName = "FishingCluesDetailsNative",
-                    Title = "Fish Details",
-                    Subtitle = "Fishing Clues",
-                    Size = new Vector2(520.0f, 540.0f),
-                    ContentPadding = new Vector2(14.0f, 12.0f),
-                    RememberClosePosition = true,
-                };
-                nativeClues.Open();
-            });
-        }
-        catch (Exception ex) { Log.Error(ex, "Could not open the native fish-details window."); }
-    }
+    private void OpenSections(IReadOnlyList<FishClueSection> sections) => dalamudClues.Show(sections);
 }

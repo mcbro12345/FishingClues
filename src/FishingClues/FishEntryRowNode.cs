@@ -8,9 +8,6 @@ namespace FishingClues;
 
 public sealed class FishEntryRowNode : ListButtonNode
 {
-    // Short badges ("Up now", "23h 14m", "Available") fit the compact corner
-    // box; a full availability sentence needs to wrap onto its own lines below
-    // the fish name instead of being cut off.
     private const float CompactHeight = 44.0f;
     private const int WrappedBadgeTextLengthThreshold = 16;
 
@@ -54,10 +51,7 @@ public sealed class FishEntryRowNode : ListButtonNode
 
     public unsafe void AddFavoriteStar(bool favorite, Func<bool> toggle)
     {
-        // Component defaults to no sound effect at all; borrow the same id
-        // KamiToolKit's own dropdown uses for a selection click, since
-        // nothing else on this row ever plays a sound.
-        Component->SoundEffectId = 1;
+        Component->SoundEffectId = 1; // same click sound KamiToolKit's dropdown uses
         favoriteButton = new LabelTextNode {
             Size = new Vector2(28, 28), FontSize = 20,
             AlignmentType = AlignmentType.Center, TextFlags = TextFlags.None,
@@ -87,9 +81,7 @@ public sealed class FishEntryRowNode : ListButtonNode
         bool wrapped = text.Length > WrappedBadgeTextLengthThreshold;
         if (availabilityBadge is null)
         {
-            // LabelTextNode defaults LineSpacing to 24, tuned for its usual
-            // 14pt label text; left alone at our smaller 12pt size it reserves
-            // nearly double the vertical room each line actually needs.
+            // default LineSpacing (24) is tuned for 14pt text, too tall for our 12pt badge
             availabilityBadge = new LabelTextNode { FontSize = 12, LineSpacing = 14 };
             availabilityBadge.AttachNode(this, NodePosition.AfterAllSiblings);
         }
@@ -111,8 +103,6 @@ public sealed class FishEntryRowNode : ListButtonNode
 
         if (!wrapped)
         {
-            // No availability line (or a short one): just the icon and name,
-            // centered together in the fixed compact row like any other row.
             float iconY = (CompactHeight - IconSize) / 2.0f;
             float labelY = (CompactHeight - 28.0f) / 2.0f;
             if (fishIcon is not null) fishIcon.Position = new Vector2(4.0f, iconY);
@@ -131,26 +121,17 @@ public sealed class FishEntryRowNode : ListButtonNode
             return;
         }
 
-        // There's a full-sentence availability line: it sits directly under
-        // the fish name (tight, like the name/badge stack always used to
-        // look), and that whole name+availability stack is what the icon
-        // gets vertically centered against - not the name on its own.
         float wrappedWidth = Math.Max(80.0f, Width - 58.0f);
         if (Math.Abs(availabilityBadge!.Width - wrappedWidth) > 0.5f) availabilityBadge.Width = wrappedWidth;
         float textHeight = Math.Max(14.0f, availabilityBadge.GetTextDrawSize(false).Y);
         availabilityBadge.Height = textHeight;
-        // The name box (28px) is taller than the AXIS-14 text actually drawn
-        // inside it; since it's center-aligned, that slack shows up as extra
-        // room above and below the name rather than a visible gap - measure
-        // the real glyph height instead of assuming the box height.
+        // the 28px name box is taller than the glyphs actually drawn in it
         float nameHeight = Math.Max(14.0f, LabelNode.GetTextDrawSize(false).Y);
 
         const float lineGap = 0.0f;
         float stackHeight = nameHeight + lineGap + textHeight;
         float contentHeight = Math.Max(IconSize, stackHeight);
-        // Rows with a wrapped availability line used to grow taller than a
-        // plain row; keep every row in the list the same size instead, and
-        // just center the (still tight) name+availability stack within it.
+        // keep wrapped rows the same height as compact ones, just centered
         float desiredHeight = CompactHeight;
         float margin = Math.Max(0.0f, (desiredHeight - contentHeight) / 2.0f);
 

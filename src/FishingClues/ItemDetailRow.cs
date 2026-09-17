@@ -19,8 +19,7 @@ public sealed class ItemDetailRow : ResNode
             var match = links.Where(p => text.StartsWith(p.Key, StringComparison.Ordinal))
                 .OrderByDescending(p => p.Key.Length).FirstOrDefault();
             int length = match.Key?.Length ?? 1;
-            // Treat an item and its following separator as one wrapping unit.
-            // A comma must never become a separate node on the next line.
+            // an item name and its trailing comma wrap together, never split onto separate lines
             if (match.Key is not null && length < text.Length && text[length] == ',') {
                 length++;
                 if (length < text.Length && text[length] == ' ') length++;

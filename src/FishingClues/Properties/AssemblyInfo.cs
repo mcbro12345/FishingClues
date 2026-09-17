@@ -3,7 +3,7 @@ using System.Runtime.Versioning;
 
 [assembly: AssemblyCompany("mcbro")]
 [assembly: AssemblyConfiguration("Release")]
-[assembly: AssemblyDescription("A Fishing Log-style journal with stable Dalamud and experimental native modes.")]
+[assembly: AssemblyDescription("A better Fishing Log: spoiler-conscious, and packed with the info you actually need to find and catch fish.")]
 [assembly: AssemblyFileVersion("3.20.25.0")]
 [assembly: AssemblyInformationalVersion("3.20.25.0")]
 [assembly: AssemblyProduct("FishingClues")]

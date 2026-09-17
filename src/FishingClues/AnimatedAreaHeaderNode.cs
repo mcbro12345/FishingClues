@@ -3,8 +3,6 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues;
 
-// Animate layout without a native Clip flag: these non-component layout nodes
-// cannot safely establish an isolated clip scope in the game's draw list.
 public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
 {
     private float progress;
@@ -49,8 +47,6 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
         if (!ready) { base.OnRecalculateLayout(); return; }
         float fullHeight = 28 + FirstItemSpacing;
         foreach (var node in Nodes) fullHeight += node.Height + ItemSpacing;
-        // Reserve the space first, then fade in; reverse this on close. This
-        // animates even one-row sections without clipping or overlapping rows.
         float layoutProgress = Math.Min(1, progress * 2);
         float opacity = Math.Max(0, progress * 2 - 1);
         float visibleHeight = 28 + (fullHeight - 28) * layoutProgress;
@@ -58,7 +54,6 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
         foreach (var node in Nodes)
         {
             node.Y = y;
-            // Fade only when the full row area has been reserved.
             node.IsVisible = opacity > 0;
             node.Alpha = opacity;
             if (FitWidth) node.Width = Width;

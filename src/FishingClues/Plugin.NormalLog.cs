@@ -31,10 +31,6 @@ using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-// Everything to do with living alongside the game's own Fishing Log: taking
-// it over each frame when replacement is turned on, watching for it to close
-// so our journal can pop back up in its place, and stepping aside cleanly
-// whenever the user asks to see the real thing.
 public sealed partial class Plugin
 {
     private unsafe void OnFrameworkUpdate(IFramework framework)
@@ -107,8 +103,7 @@ public sealed partial class Plugin
             }
             else if (now >= normalLogReturnAfter && !addonVisible)
             {
-                // Close(false) is asynchronous. Do not create another addon with
-                // the same name until the previous instance has been removed.
+                // Close(false) is async; wait for the old addon to actually go away
                 var previous = GameGui.GetAddonByName("FishingCluesJournalNative");
                 if (previous.IsNull)
                 {
@@ -130,8 +125,6 @@ public sealed partial class Plugin
             allowExplicitVanillaLog = false;
             replacementRequested = false;
             pendingNormalLogSpot = null;
-            // The low-level PlayerState.IsLoaded field is not a reliable login
-            // gate on the user's client build. Use the supported service instead.
             if (configuration.ReplaceNormalFishingLog && ClientState.IsLoggedIn)
             {
                 if (agentActive) ((AgentInterface*)agent)->Hide();
@@ -145,11 +138,7 @@ public sealed partial class Plugin
             return;
         }
         if (allowExplicitVanillaLog)
-        {
-            // This is the lifetime of the user's normal-log visit, not a
-            // five-second selection request. Only an actual close ends it.
             return;
-        }
         if (replacementRequested)
         {
             replacementRequested = false;
@@ -191,8 +180,7 @@ public sealed partial class Plugin
 
     private void OnNormalLogClosed(AddonEvent eventType, AddonArgs args)
     {
-        // Queue until Framework.Update, outside the game's hide/finalize callback.
-        // Ignore log windows closed by our initial replacement interception.
+        // deferred to Framework.Update, outside the game's hide/finalize callback
         if (allowExplicitVanillaLog || normalLogWasVisible)
         {
             normalLogCloseRequested = true;
@@ -202,8 +190,6 @@ public sealed partial class Plugin
 
     private async Task ReturnFromNormalLogAsync()
     {
-        // Recreate the custom addon through the established open path, which
-        // saves/restores session state even if the old native instance lingers.
         await OpenNativeJournalAsync();
         normalLogReturnStatus = nativeJournal?.IsOpen == true
             ? "Custom journal reopened."
@@ -234,8 +220,7 @@ public sealed partial class Plugin
         pendingNormalLogSelectionAppliedAt = 0;
         pendingNormalLogSpot = null;
         replacementRequested = false;
-        // The main command initializes the fishing notebook data. Agent.Show alone
-        // can display an empty shell when the command was previously intercepted.
+        // Agent.Show alone can leave an empty shell if the command was intercepted before
         if (fishingLogCommandId != 0) {
             UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
             if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
@@ -301,7 +286,6 @@ public sealed partial class Plugin
 
     private void CloseReplacementJournal()
     {
-        dalamudJournal.IsOpen = false;
         if (nativeJournal?.IsOpen == true)
             nativeJournal.Close();
     }

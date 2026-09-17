@@ -13,9 +13,6 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues;
 
-// Picking a region, then an area, then a fishing hole, and filling the fish
-// list for whichever one is selected - plus the guide's search box, which
-// fills that same list from a text query instead of a spot.
 public sealed partial class NativeJournalWindow
 {
     public void SubmitSearch(string query, uint itemId = 0)
@@ -62,7 +59,6 @@ public sealed partial class NativeJournalWindow
             }
         }
         else if (sessionState.SelectedFish != 0) {
-            // Restore whichever fish was selected the last time this search was open.
             var row = fishButtons.FirstOrDefault(p => p.Value == sessionState.SelectedFish).Key;
             row?.OnClick?.Invoke();
             if (row is not null) fishList.ScrollBarNode.ScrollPosition = Math.Max(0, row.Y);
@@ -122,9 +118,7 @@ public sealed partial class NativeJournalWindow
                 }
                 foreach (var header in areaHeaders.OfType<AnimatedAreaHeaderNode>()) header.RecalculateLayout();
                 areaList?.RecalculateSizes();
-                // Expanding/collapsing can add or remove the scrollbar, which
-                // changes the column's usable width; keep the dropdowns in
-                // sync with it instead of leaving them at a stale width.
+                // Toggling can add/remove the scrollbar, which changes the column width.
                 ApplyAreaDropdownWidths();
             };
             areaHeaders.Add(areaDropDown);
@@ -156,10 +150,6 @@ public sealed partial class NativeJournalWindow
             areaList.ContentNode.AddNode(areaDropDown);
         }
         areaList.RecalculateSizes();
-        // Widths above were computed against whatever content width the
-        // area list had left over from the previously-shown region; now
-        // that this region's content size is settled, recompute them so
-        // dropdown width doesn't drift between region switches.
         ApplyAreaDropdownWidths();
         ClearFishList();
         RefreshFishListLayout();
@@ -178,25 +168,17 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // RecalculateSizes() only updates ContentNode's own Width (e.g. to
-    // account for a scrollbar); it doesn't reliably re-run FitWidth on the
-    // rows already inside it, so wrapped availability badges can end up
-    // measuring against a stale column width unless RecalculateLayout() is
-    // also forced afterward. Every fishList resize/repopulation path should
-    // go through this instead of calling the two separately.
+    // RecalculateSizes() alone leaves rows measuring against a stale column
+    // width, so FitWidth rows (the availability badges) need RecalculateLayout too.
     private void RefreshFishListLayout()
     {
         fishList?.RecalculateSizes();
         fishList?.ContentNode.RecalculateLayout();
     }
 
-    // Every place that rebuilds the fish list needs to tear down the same
-    // three things together. Missing one of them is how bugs creep in - a
-    // row's own MouseOut never fires if it's destroyed while still hovered
-    // (un-favoriting the last fish in an empty search, say), so its tooltip
-    // is left with nothing to close it; and a row left in availabilityRows
-    // after being destroyed means the 30-second refresh later calls
-    // SetAvailability on a node that no longer exists.
+    // A row destroyed while hovered never fires its own MouseOut, so its
+    // tooltip needs closing here; a row left in availabilityRows after being
+    // destroyed would get SetAvailability called on it by the 30s refresh.
     private void ClearFishList()
     {
         fishHeader?.HideTooltip();
@@ -281,7 +263,7 @@ public sealed partial class NativeJournalWindow
                 bool favorite = configuration.FavoriteFishItemIds.Add(entry.ItemId);
                 if (!favorite) configuration.FavoriteFishItemIds.Remove(entry.ItemId);
                 saveDivider();
-                // Defer removals from the empty-query list until the click callback finishes.
+                // can't rebuild the list from inside its own row's click handler
                 if (string.IsNullOrWhiteSpace(searchText)) searchPending = true;
                 return favorite;
             });

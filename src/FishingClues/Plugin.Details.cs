@@ -31,9 +31,6 @@ using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-// Turns a fish's catch conditions into the actual lines of text shown in the
-// journal and clue windows - bait and mooch chains, time/weather windows,
-// hook strength - plus the small formatting helpers those lines are built from.
 public sealed partial class Plugin
 {
     private FishClueSection BuildFishSection(JournalFish fish)

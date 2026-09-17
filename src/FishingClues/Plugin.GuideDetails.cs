@@ -41,8 +41,7 @@ public sealed partial class Plugin
             (location, pole) => SelectedCatchDetails(fish.ItemId, location, pole), links);
     }
 
-    // These relic fish explicitly require a particular tool. Ordinary fish are
-    // selected by bait, location and total gathering, not a rod species list.
+    // these relic fish require a specific pole; ordinary fish don't
     private static uint RequiredPole(uint fish) => fish switch {
         38792 or 38793 => 38725,
         38798 or 38799 => 38736,

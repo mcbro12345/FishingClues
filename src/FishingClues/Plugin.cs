@@ -46,7 +46,6 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
     private readonly Task nativeUiInitialization;
     private readonly Dictionary<string, string> regionByZone;
     private readonly WindowSystem windowSystem = new("FishingClues");
-    private readonly DalamudJournalWindow dalamudJournal;
     private readonly DalamudClueWindow dalamudClues;
     private readonly DalamudSettingsWindow dalamudSettings;
     private readonly DiagnosticWindow diagnosticWindow;
@@ -57,13 +56,11 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
     private bool journalKeybindWasDown;
     private NativeJournalWindow? nativeJournal;
     private NativeJournalWindow? nativeGuide;
-    private FishClueWindow? nativeClues;
     private IReadOnlyList<JournalRegion>? journalCache;
     private long lastJournalBuild;
     private ulong journalCharacterId;
     private readonly HashSet<ushort> vanillaRevealedRegions = new();
     private long nextFishRevealScan;
-    private long lastClickHandled;
     private long lastReplacement;
     private long pendingNormalLogUntil;
     private long pendingNormalLogSelectionAppliedAt;
@@ -103,40 +100,28 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         configuration.ApplySimplifiedJournalSettings();
         if (configuration.Version < 9)
         {
-            // The area column was narrowed to leave more room for the fish
-            // panel; existing saves would otherwise keep the old width.
             configuration.NativeAreaWidth = 280.0f;
             configuration.Version = 9;
         }
         if (configuration.Version < 10)
         {
-            // The area dropdowns now stretch to nearly fill the column
-            // instead of leaving a wide, uneven gap on either side.
             configuration.NativeAreaDropdownWidth = 999.0f;
             configuration.Version = 10;
         }
         if (configuration.Version < 11)
         {
-            // Reverted the area column back to its original proportions;
-            // the divider positions are now set by hand instead (see the
-            // temporary region/area divider unlock in settings).
             configuration.NativeAreaWidth = 350.0f;
             configuration.NativeAreaDropdownWidth = 310.0f;
             configuration.Version = 11;
         }
         if (configuration.Version < 12)
         {
-            // Column widths measured by hand with the temporary divider
-            // unlock, matching the intended layout exactly.
             configuration.NativeRegionWidth = 162.0f;
             configuration.NativeAreaWidth = 263.0f;
             configuration.Version = 12;
         }
         if (configuration.Version < 13)
         {
-            // The dropdown should hug both the left and right edges of the
-            // area column, not just the left; letting it stretch (instead of
-            // centering it) does that without reintroducing a left gap.
             configuration.NativeAreaDropdownWidth = 999.0f;
             configuration.Version = 13;
         }
@@ -147,13 +132,10 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
             .ToDictionary(group => group.Key, group => group.GroupBy(info => info.Region)
                 .OrderByDescending(regions => regions.Count()).First().Key, StringComparer.OrdinalIgnoreCase);
         nativeUiInitialization = KamiToolKitLibrary.InitializeAsync(PluginInterface, "Fishing Clues");
-        dalamudJournal = new DalamudJournalWindow(GetJournal, OpenFish, OpenNormalFishingLog, TextureProvider, configuration, BuildFishSection,
-            () => PluginInterface.SavePluginConfig(configuration));
         dalamudClues = new DalamudClueWindow();
         dalamudSettings = new DalamudSettingsWindow(configuration, SaveConfiguration, ApplyLiveNativeLayout, LogJournalDiagnostics, () => { _ = RefreshFishDataAsync(); }, () => dataRefreshBusy, () => dataRefreshStatus, KeyState, RefreshJournalContents);
         diagnosticWindow = new DiagnosticWindow(LogJournalDiagnostics);
         windowSystem.AddWindow(diagnosticWindow);
-        windowSystem.AddWindow(dalamudJournal);
         windowSystem.AddWindow(dalamudClues);
         windowSystem.AddWindow(dalamudSettings);
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
@@ -199,9 +181,6 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
 
     public unsafe void Dispose()
     {
-        // Note whether our custom journal is currently standing in for the
-        // normal Fishing Log, so it can be restored once our interception
-        // hook is gone below.
         bool wasReplacingLog = configuration.ReplaceNormalFishingLog && nativeJournal?.IsOpen == true;
         disposed = true;
         ReleaseItemMenuData();
@@ -220,13 +199,11 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         {
             nativeJournal?.Dispose();
             nativeGuide?.Dispose();
-            nativeClues?.Dispose();
             KamiToolKitLibrary.Dispose();
         }
         if (wasReplacingLog && fishingLogCommandId != 0)
         {
-            // The interception hook above is already gone, so this reaches
-            // the game's own Fishing Log implementation directly.
+            // hook is already disposed above, so this reaches the game's own handler
             UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
             if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
         }
@@ -276,7 +253,7 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
         foreach (FishingSpotSheet spot in DataManager.GetExcelSheet<FishingSpotSheet>())
         {
             if (spot.PlaceName.RowId == 0) continue;
-            // IDs and flags only: diagnostics must not reveal unknown names.
+            // IDs and flags only, never fish/spot names not yet unlocked
             string discovered = player == null ? "unavailable"
                 : spot.RowId >= player->UnlockedFishingSpotsBitArray.BitCount ? "out-of-range"
                 : IsFishingHoleDiscovered(player, spot.RowId).ToString();
@@ -295,18 +272,13 @@ public sealed partial class Plugin : IDalamudPlugin, IDisposable
     {
         windowSystem.Draw();
         DrawItemMenu();
-        if (configuration.OpenUnknownOnLeftClick && !configuration.ReplaceNormalFishingLog)
-            TryHandleUnknownFishClick();
     }
 
     private void SaveConfiguration()
     {
         PluginInterface.SavePluginConfig(configuration);
         if (configuration.EmbedFishDetails)
-        {
             dalamudClues.IsOpen = false;
-            nativeClues?.Close();
-        }
     }
 
     private void ApplyLiveNativeLayout()

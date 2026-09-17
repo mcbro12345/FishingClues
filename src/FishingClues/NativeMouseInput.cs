@@ -3,10 +3,8 @@ using FFXIVClientStructs.FFXIV.Client.System.Input;
 
 namespace FishingClues;
 
-// KamiToolKit's MouseDown event fires for any button, so anywhere that needs
-// to tell left clicks from right clicks (or "still held" from "just
-// pressed") has to read the raw cursor state itself. Centralized here so
-// that isn't reimplemented at every click handler that needs it.
+// KamiToolKit's MouseDown fires for any button, so click handlers that care which
+// one (or whether it's still held) need to read the raw cursor state instead.
 internal static class NativeMouseInput
 {
     public static unsafe bool IsLeftButtonPressed()

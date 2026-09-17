@@ -13,9 +13,6 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues;
 
-// The per-frame native draw callback and the window lifecycle around it:
-// divider dragging, the partially-clipped-row hover/click workaround, and
-// saving/tearing down session state when the window hides or closes.
 public sealed partial class NativeJournalWindow
 {
     private FishEntryRowNode? partialHover;
@@ -33,8 +30,6 @@ public sealed partial class NativeJournalWindow
                 guidePole = guidePoles.FirstOrDefault();
                 poleSelector?.SetOptions(guidePoles, guidePole);
             }
-            // Preserve dropdown nodes: the native input system can retain their focus pointers.
-            // Only rebuild the noninteractive catch text after selection.
             RenderCatchBody();
         }
         if (searchPending) {
@@ -49,8 +44,6 @@ public sealed partial class NativeJournalWindow
                 var info = getAvailability(fish);
                 if (info is not null) row.SetAvailability(info.AvailableNow, info.BadgeText, info.Tooltip);
             }
-            // Switching between a short badge and a wrapped full-sentence one
-            // changes row heights; re-stack the list so rows don't overlap.
             RefreshFishListLayout();
         }
         var framework = Framework.Instance();
@@ -77,8 +70,7 @@ public sealed partial class NativeJournalWindow
         if (!draggingDivider && fishList is not null && stage != null
             && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon)
         {
-            // Native buttons reject clicks when only part of their bounds is
-            // clipped. Permit the visible portion, never the hidden portion.
+            // native buttons reject clicks when only part of their bounds is clipped
             float scale = Math.Max(0.1f, addon->Scale);
             Vector2 origin = fishList.ScreenPosition;
             float x = (mouse.PositionX - origin.X) / scale;
@@ -107,8 +99,6 @@ public sealed partial class NativeJournalWindow
             if (previousPartialHover is not null && fishButtons.ContainsKey(previousPartialHover)) previousPartialHover.HideTooltip();
             partialHover?.ShowTooltip();
         }
-        // Use the game's mouse state, not ImGui's filtered input for a native window.
-        // Scope hit testing to this addon so other windows cannot trigger a drag.
         if (!draggingDivider && stage != null
             && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon
             && (mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0)
@@ -156,8 +146,6 @@ public sealed partial class NativeJournalWindow
             foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
                 animating |= header.Tick();
             float previousHeight = areaList.ContentNode.Height;
-            // Collapse callbacks can change a header height without an animation tick.
-            // Always reconcile sibling positions before refreshing the scroll range.
             areaList.ContentNode.RecalculateLayout();
             if (animating || previousHeight != areaList.ContentNode.Height)
             {

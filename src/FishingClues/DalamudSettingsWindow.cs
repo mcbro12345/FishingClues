@@ -160,8 +160,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
         applyNativeLayout();
     }
 
-    // ImGui.TextDisabled doesn't wrap; use this for any dimmed description
-    // line long enough to reach the window edge.
+    // ImGui.TextDisabled doesn't wrap on its own
     private static void DrawWrappedHint(string text)
     {
         ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);

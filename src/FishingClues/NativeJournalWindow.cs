@@ -190,9 +190,7 @@ public sealed partial class NativeJournalWindow(
             else ShowSearchPrompt();
             LayoutAttachedNodes();
         }
-        // In guide mode, RefreshSearch (fired below via searchPending) clears
-        // details when it (re)builds the result list, so fish selection is
-        // restored there instead, once the matching row actually exists.
+        // guide mode restores selection later, after RefreshSearch rebuilds the list
         if (!GuideMode)
         {
             var restoredFish = selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == sessionState.SelectedFish);
@@ -223,7 +221,6 @@ public sealed partial class NativeJournalWindow(
             ? Math.Clamp(position, 0, Math.Max(0, list.ScrollBarNode.ScrollMaxPosition)) : 0;
     }
 
-    // Anchor to the outer frame, not the padded content area's old footer.
     private Vector2 FooterPosition => new(22, Size.Y - 56);
 
     private void InitializeJournalButton()
@@ -309,8 +306,6 @@ public sealed partial class NativeJournalWindow(
         dropdownWidthSetting = dropdownWidth;
         showNormalLogButton = configuredShowButton;
         Size = new Vector2(windowWidth, windowHeight);
-        // A settings change (e.g. toggling the availability countdown) should
-        // be visible right away rather than waiting for the periodic refresh.
         nextAvailabilityRefresh = 0;
         if (!IsOpen)
             return;
@@ -392,9 +387,6 @@ public sealed partial class NativeJournalWindow(
         float fishBodyHeight = listHeight - (GuideMode ? 8 : FishSummaryHeight);
         fishList.Position = contentOrigin + new Vector2(fishX, HeaderHeight + (GuideMode ? 8 : FishSummaryHeight));
         fishList.Size = new Vector2(fishWidth, fishBodyHeight);
-        // Any settings change (not just an actual resize) routes through
-        // here, so re-run the same relayout used everywhere else the fish
-        // list changes.
         RefreshFishListLayout();
         if (detailsList is not null && detailsDivider is not null)
         {
@@ -455,8 +447,7 @@ public sealed partial class NativeJournalWindow(
         ApplyAreaDropdownWidths();
         regionList.RecalculateSizes();
         RefreshFishListLayout();
-        // Native ellipsis can replace the text buffer. Always restore from the
-        // journal model after width/layout changes, never from the shortened label.
+        // native ellipsis overwrites the text buffer, so restore from the model, not the label
         foreach (var pair in regionButtons)
             pair.Key.String = pair.Value.IsUnlocked ? pair.Value.Name : "???";
         if (configuration.IsDividerLocked(dragKind)) ReleaseResizeCursor();

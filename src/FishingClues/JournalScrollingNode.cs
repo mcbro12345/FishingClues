@@ -9,8 +9,7 @@ public sealed class JournalScrollingNode : ScrollingNode<JournalListNode>
     {
         float previous = ScrollBarNode.ScrollPosition;
         base.OnSizeChanged();
-        // Base updates the range before applying content width and laying out rows.
-        // Refresh it after the final layout, then restore against the new range.
+        // base sets the scroll range before rows are laid out, so redo it after
         ContentNode.RecalculateLayout();
         ScrollBarNode.UpdateScrollParams();
         ScrollBarNode.ScrollPosition = float.IsFinite(previous)

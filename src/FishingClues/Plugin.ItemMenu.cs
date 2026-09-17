@@ -31,10 +31,6 @@ using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-// The right-click "Search Fishing Clues" / "Fishing Clues - N uncaught" menu
-// entries, and the click-through on the fishing log's "?????" rows for fish
-// whose name isn't known yet - both routes end up opening the item's native
-// context menu or the clue window for a still-unidentified fish.
 public sealed partial class Plugin
 {
     private static uint pendingItemMenu;
@@ -65,8 +61,7 @@ public sealed partial class Plugin
             Payload = (byte*)itemLinkPayload.AddrOfPinnedObject(),
             PayloadEnd = checked((ushort)payload.Length),
         };
-        // Use the actual chat handler. It builds the game's menu and invokes
-        // the normal context-menu hooks, including other installed plugins.
+        // routes through the real chat handler so other plugins' context-menu hooks still fire
         openingLinkedItem = itemId;
         try { panel->LogViewer.HandleLinkClick(link); }
         finally { openingLinkedItem = 0; }
@@ -133,66 +128,6 @@ public sealed partial class Plugin
             result.Add(new HiddenFish(slot.Id, itemId, fish.FishingSpot.IsValid ? fish.FishingSpot.Value.GatheringLevel : (byte)0, knownName));
         }
         return result;
-    }
-
-    private unsafe void TryHandleUnknownFishClick()
-    {
-        if (!ImGui.IsMouseClicked(ImGuiMouseButton.Left) || Environment.TickCount64 - lastClickHandled < 250)
-            return;
-        AtkUnitBasePtr ptr = GameGui.GetAddonByName("FishingNote");
-        if (ptr.IsNull || !ptr.IsVisible)
-            return;
-        AgentFishingNote* agent = AgentFishingNote.Instance();
-        if (agent == null || agent->Mode != 0)
-            return;
-        var missing = CaptureMissingFish(agent).Where(f => f.KnownName is null).ToList();
-        if (missing.Count == 0)
-            return;
-        var unknownNodes = new List<nint>();
-        AtkUnitBase* addon = (AtkUnitBase*)ptr.Address;
-        FindUnknownTextNodes(&addon->UldManager, unknownNodes, 0);
-        unknownNodes.Sort((a, b) =>
-        {
-            var left = (AtkTextNode*)a;
-            var right = (AtkTextNode*)b;
-            int y = left->AtkResNode.ScreenY.CompareTo(right->AtkResNode.ScreenY);
-            return y != 0 ? y : left->AtkResNode.ScreenX.CompareTo(right->AtkResNode.ScreenX);
-        });
-        Vector2 mouse = ImGui.GetMousePos();
-        for (int i = 0; i < Math.Min(unknownNodes.Count, missing.Count); i++)
-        {
-            AtkResNode* node = &((AtkTextNode*)unknownNodes[i])->AtkResNode;
-            float width = Math.Max(node->Width * node->GetScaleX(), 90.0f);
-            float height = Math.Max(node->Height * node->GetScaleY(), 32.0f);
-            float left = node->ScreenX - 12.0f;
-            float top = node->ScreenY - 8.0f;
-            if (mouse.X < left || mouse.X > left + width + 24.0f || mouse.Y < top || mouse.Y > top + height + 16.0f)
-                continue;
-            lastClickHandled = Environment.TickCount64;
-            OpenClues([missing[i]]);
-            return;
-        }
-    }
-
-    private unsafe static void FindUnknownTextNodes(AtkUldManager* manager, List<nint> result, int depth)
-    {
-        if (manager == null || manager->NodeList == null || depth > 12) return;
-        for (int i = 0; i < manager->NodeListCount; i++)
-        {
-            AtkResNode* node = manager->NodeList[i];
-            if (node == null || !node->IsVisible()) continue;
-            if (node->Type == NodeType.Text)
-            {
-                var text = (AtkTextNode*)node;
-                string value = text->NodeText.ToString().Trim();
-                if (value.Length >= 2 && value.All(c => c == '?' || char.IsWhiteSpace(c))) result.Add((nint)text);
-            }
-            else if (node->Type == NodeType.Component)
-            {
-                AtkComponentBase* component = ((AtkComponentNode*)node)->Component;
-                if (component != null) FindUnknownTextNodes(&component->UldManager, result, depth + 1);
-            }
-        }
     }
 
     private unsafe static bool IsNameVisibleInFishingLog(AtkUnitBase* addon, string itemName) => addon != null && FindVisibleText(&addon->UldManager, itemName, 0);

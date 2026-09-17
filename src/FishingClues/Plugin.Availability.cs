@@ -26,7 +26,7 @@ public sealed partial class Plugin
         {
             uint? territoryId = ResolveTerritoryId(fish);
             if (territoryId is not uint tId || !DataManager.GetExcelSheet<TerritoryType>().TryGetRow(tId, out TerritoryType territory) || territory.WeatherRate.RowId == 0)
-                return null; // No known location, or that location has no dynamic weather; cannot determine.
+                return null;
             weatherRateId = territory.WeatherRate.RowId;
         }
 
@@ -102,9 +102,6 @@ public sealed partial class Plugin
         return null;
     }
 
-    // Shared by FindNextAvailability and FindAvailabilityEnd: whether the
-    // weather (and, if gated, the previous window's weather) at window start
-    // ws satisfies the fish's condition.
     private bool WeatherMatchesAt(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long ws)
     {
         bool weatherOk = !weatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws)) is uint w && condition.Weather.Contains(w));
@@ -133,9 +130,9 @@ public sealed partial class Plugin
             long ws = windowStart + i * EorzeaWeather.SecondsPerWeatherWindow;
             long windowEnd = ws + EorzeaWeather.SecondsPerWeatherWindow;
             if (!WeatherMatchesAt(condition, weatherRateId, weatherGated, prevWeatherGated, ws))
-                return Math.Max(now, ws); // Weather (or previous weather) lapses at this window's start.
+                return Math.Max(now, ws);
             if (!timeGated)
-                continue; // No daily time restriction; availability only ends when weather changes.
+                continue;
             long? end = TimeWindowEndWithin(ws, condition.StartHour, condition.EndHour, i == 0 ? now : ws, windowEnd);
             if (end is long t) return t;
         }
@@ -172,15 +169,11 @@ public sealed partial class Plugin
         return candidates.Count == 0 ? null : candidates.Min();
     }
 
-    // Mirrors FirstTimeMatchInWindow, but finds where the interval that is
-    // already active at earliestAllowed ends, instead of where the next match
-    // begins. Each weather window is exactly 8 Eorzea hours (SecondsPerWeatherWindow
-    // == 8 * SecondsPerEorzeaHour), so an end that lands exactly on the window's own
-    // boundary is indistinguishable from "keeps going" and must not be reported as
-    // a real end - the caller re-checks weather for the next window instead.
+    // an end landing exactly on the window boundary means "keeps going", not a real
+    // end - the caller re-checks weather for the next window in that case
     private static long? TimeWindowEndWithin(long windowStart, double startHour, double endHour, long earliestAllowed, long windowEnd)
     {
-        if (startHour == 0 && endHour == 24) return null; // Never actually ends on its own.
+        if (startHour == 0 && endHour == 24) return null;
 
         double bandStart = EorzeaWeather.EorzeaHourOfDay(windowStart);
         double bandEnd = bandStart + 8;

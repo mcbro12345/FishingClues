@@ -31,10 +31,6 @@ using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-// Everything to do with turning game data into the JournalRegion/Area/Spot/Fish
-// tree the rest of the plugin reads from - loading the cached fish conditions,
-// pulling a fresh copy down, and walking the fishing-spot sheets to build (and
-// cache) the journal itself.
 public sealed partial class Plugin
 {
     private static readonly string[] RegionOrder =

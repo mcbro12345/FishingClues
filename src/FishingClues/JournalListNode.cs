@@ -3,8 +3,7 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues;
 
-// Native scroll culling can change visibility flags. Offscreen rows still own
-// their layout space; excluding them compresses the range and overlaps rows.
+// offscreen rows still get laid out - skipping them would overlap and compress the rest
 public sealed class JournalListNode : VerticalListNode
 {
     protected override void OnRecalculateLayout()

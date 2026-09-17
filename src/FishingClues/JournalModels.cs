@@ -44,3 +44,6 @@ public sealed record JournalRegion(string Name, bool IsUnlocked, IReadOnlyList<J
 {
     public uint Order => Areas.Count == 0 ? uint.MaxValue : Areas.Min(area => area.Order);
 }
+
+// One named block of catch-condition text for a single fish (bait, time window, weather, and so on).
+public sealed record FishClueSection(string Heading, IReadOnlyList<string> Lines);

@@ -6,8 +6,7 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues;
 
-// A native popup selector, not a collapsing section. The toolkit closes the
-// popup after selection; its callback only queues next-frame content updates.
+// the toolkit closes the popup on selection; OnOptionSelected only queues the next-frame update
 public sealed class DetailSelectorRow<T> : ResNode
 {
     private readonly SizedDropDownNode<T> selector;

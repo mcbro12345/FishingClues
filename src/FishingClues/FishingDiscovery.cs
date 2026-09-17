@@ -4,8 +4,8 @@ namespace FishingClues;
 
 public static class FishingDiscovery
 {
-    // These journal regions have spoiler-hidden labels. Presence in the agent's
-    // region-ID array is not a discovery signal: locked entries also have IDs.
+    // 3704/3705/4502 are spoiler-hidden regions; having an ID in the agent's
+    // array isn't proof of discovery, since locked entries have IDs too.
     public static bool IsRegionNameVisible(ushort placeNameId, bool hasDiscoveredHole, bool vanillaShowsName)
         => placeNameId switch
         {
@@ -13,8 +13,8 @@ public static class FishingDiscovery
             3704 or 3705 or 4502 => hasDiscoveredHole || vanillaShowsName,
             _ => true,
         };
-    // FishingSpot.RowId is the discovery key. Order is only a display-sort key.
-    // Special rows outside the ordinary notebook bitfield must not alias its bits.
+    // RowId is the discovery key (Order is just a display-sort key), and rows
+    // outside the ordinary notebook bitfield must not alias its bits.
     public static bool IsDiscovered(ReadOnlySpan<byte> flags, int bitCount, uint rowId)
     {
         if (bitCount <= 0 || rowId >= (uint)bitCount || rowId / 8 >= (uint)flags.Length)

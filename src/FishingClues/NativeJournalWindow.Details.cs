@@ -13,9 +13,6 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues;
 
-// The details panel under the fish list: plain catch-condition text for the
-// normal journal, or the richer location/pole pickers when a fish guide
-// entry is selected instead.
 public sealed partial class NativeJournalWindow
 {
     private JournalListNode? catchBody;
