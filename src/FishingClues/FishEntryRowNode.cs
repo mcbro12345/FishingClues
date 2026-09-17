@@ -14,6 +14,8 @@ public sealed class FishEntryRowNode : ListButtonNode
     private const float CompactHeight = 44.0f;
     private const int WrappedBadgeTextLengthThreshold = 16;
 
+    private const float IconSize = 38.0f;
+
     private readonly IconImageNode fishIcon;
     private readonly LabelTextNode unknownIcon;
     private LabelTextNode? favoriteButton;
@@ -29,12 +31,10 @@ public sealed class FishEntryRowNode : ListButtonNode
         TextTooltip = fish.IdentityVisible ? fish.Name : "Unknown fish";
         OnClick = () => { if (!favoriteHovered) onClick(); };
 
-        LabelNode.Position = new Vector2(48.0f, 10.0f);
         LabelNode.TextFlags = TextFlags.None;
         fishIcon = new IconImageNode
         {
-            Position = new Vector2(7.0f, 6.0f),
-            Size = new Vector2(32.0f, 32.0f),
+            Size = new Vector2(IconSize, IconSize),
             FitTexture = true,
             IconId = fish.IdentityVisible ? fish.IconId : 0,
             IsVisible = fish.IdentityVisible && fish.IconId != 0,
@@ -43,9 +43,8 @@ public sealed class FishEntryRowNode : ListButtonNode
 
         unknownIcon = new LabelTextNode
         {
-            Position = new Vector2(9.0f, 7.0f),
-            Size = new Vector2(28.0f, 28.0f),
-            FontSize = 22,
+            Size = new Vector2(IconSize, IconSize),
+            FontSize = 26,
             AlignmentType = AlignmentType.Center,
             String = "?",
             IsVisible = !fish.IdentityVisible,
@@ -84,7 +83,10 @@ public sealed class FishEntryRowNode : ListButtonNode
         bool wrapped = text.Length > WrappedBadgeTextLengthThreshold;
         if (availabilityBadge is null)
         {
-            availabilityBadge = new LabelTextNode { FontSize = 12 };
+            // LabelTextNode defaults LineSpacing to 24, tuned for its usual
+            // 14pt label text; left alone at our smaller 12pt size it reserves
+            // nearly double the vertical room each line actually needs.
+            availabilityBadge = new LabelTextNode { FontSize = 12, LineSpacing = 14 };
             availabilityBadge.AttachNode(this, NodePosition.AfterAllSiblings);
         }
         availabilityWrapped = wrapped;
@@ -100,32 +102,63 @@ public sealed class FishEntryRowNode : ListButtonNode
     {
         base.OnSizeChanged();
         bool wrapped = availabilityBadge is not null && availabilityWrapped;
-        float rightReserve = favoriteButton is null ? 54 : 88;
+        float rightReserve = favoriteButton is null ? 56 : 90;
         if (availabilityBadge is not null && !wrapped) rightReserve += 82;
-        LabelNode.Position = new Vector2(48.0f, 10.0f);
-        LabelNode.Size = new Vector2(Math.Max(20.0f, Width - rightReserve), 28.0f);
-        if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(48, Width - 30), 8);
-
-        if (availabilityBadge is null)
-            return;
 
         if (!wrapped)
         {
-            availabilityBadge.Size = new Vector2(78.0f, 20.0f);
-            float badgeRight = Width - (favoriteButton is null ? 8.0f : 38.0f);
-            availabilityBadge.Position = new Vector2(Math.Max(48.0f, badgeRight - 78.0f), 12.0f);
+            // No availability line (or a short one): just the icon and name,
+            // centered together in the fixed compact row like any other row.
+            float iconY = (CompactHeight - IconSize) / 2.0f;
+            float labelY = (CompactHeight - 28.0f) / 2.0f;
+            if (fishIcon is not null) fishIcon.Position = new Vector2(4.0f, iconY);
+            if (unknownIcon is not null) unknownIcon.Position = new Vector2(4.0f, iconY);
+            LabelNode.Position = new Vector2(50.0f, labelY);
+            LabelNode.Size = new Vector2(Math.Max(20.0f, Width - rightReserve), 28.0f);
+            if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(50, Width - 30), labelY);
+
+            if (availabilityBadge is not null)
+            {
+                availabilityBadge.Size = new Vector2(78.0f, 20.0f);
+                float badgeRight = Width - (favoriteButton is null ? 8.0f : 38.0f);
+                availabilityBadge.Position = new Vector2(Math.Max(48.0f, badgeRight - 78.0f), 12.0f);
+            }
             if (Math.Abs(Height - CompactHeight) > 0.5f) Height = CompactHeight;
             return;
         }
 
-        // Full-sentence badge: stretch it under the fish name and grow the row
-        // to fit however many lines it wraps to, instead of truncating it.
-        float wrappedWidth = Math.Max(80.0f, Width - 56.0f);
-        if (Math.Abs(availabilityBadge.Width - wrappedWidth) > 0.5f) availabilityBadge.Width = wrappedWidth;
-        float textHeight = Math.Max(16.0f, availabilityBadge.GetTextDrawSize(false).Y);
+        // There's a full-sentence availability line: it sits directly under
+        // the fish name (tight, like the name/badge stack always used to
+        // look), and that whole name+availability stack is what the icon
+        // gets vertically centered against - not the name on its own.
+        float wrappedWidth = Math.Max(80.0f, Width - 58.0f);
+        if (Math.Abs(availabilityBadge!.Width - wrappedWidth) > 0.5f) availabilityBadge.Width = wrappedWidth;
+        float textHeight = Math.Max(14.0f, availabilityBadge.GetTextDrawSize(false).Y);
         availabilityBadge.Height = textHeight;
-        availabilityBadge.Position = new Vector2(48.0f, 32.0f);
-        float desiredHeight = Math.Max(CompactHeight, 32.0f + textHeight + 8.0f);
+        // The name box (28px) is taller than the AXIS-14 text actually drawn
+        // inside it; since it's center-aligned, that slack shows up as extra
+        // room above and below the name rather than a visible gap - measure
+        // the real glyph height instead of assuming the box height.
+        float nameHeight = Math.Max(14.0f, LabelNode.GetTextDrawSize(false).Y);
+
+        const float lineGap = 0.0f;
+        float stackHeight = nameHeight + lineGap + textHeight;
+        float contentHeight = Math.Max(IconSize, stackHeight);
+        // Rows with a wrapped availability line used to grow taller than a
+        // plain row; keep every row in the list the same size instead, and
+        // just center the (still tight) name+availability stack within it.
+        float desiredHeight = CompactHeight;
+        float margin = Math.Max(0.0f, (desiredHeight - contentHeight) / 2.0f);
+
+        float wrappedIconY = margin + (contentHeight - IconSize) / 2.0f;
+        float nameY = margin + (contentHeight - stackHeight) / 2.0f;
+        if (fishIcon is not null) fishIcon.Position = new Vector2(4.0f, wrappedIconY);
+        if (unknownIcon is not null) unknownIcon.Position = new Vector2(4.0f, wrappedIconY);
+        LabelNode.Position = new Vector2(50.0f, nameY);
+        LabelNode.Size = new Vector2(Math.Max(20.0f, Width - rightReserve), nameHeight);
+        if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(50, Width - 30), nameY);
+        availabilityBadge.Position = new Vector2(50.0f, nameY + nameHeight + lineGap);
+
         if (Math.Abs(Height - desiredHeight) > 0.5f) Height = desiredHeight;
     }
 }
