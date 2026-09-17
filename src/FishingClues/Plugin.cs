@@ -12,6 +12,7 @@ using FishingClues.Base;
 using FishingClues.Game.Data;
 using FishingClues.Game.Logic;
 using FishingClues.UI;
+using FishingClues.UI.Components;
 
 namespace FishingClues;
 
@@ -90,6 +91,11 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             configuration.NativeAreaDropdownWidth = 999.0f;
             configuration.Version = 13;
         }
+        if (configuration.Version < 14)
+        {
+            configuration.NativeWindowWidth = 1150.0f;
+            configuration.Version = 14;
+        }
     }
 
     public void Dispose()
@@ -153,6 +159,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         var report = new StringBuilder();
         report.AppendLine($"Fishing Clues {typeof(Plugin).Assembly.GetName().Version}");
         report.AppendLine($"Client structs: {typeof(PlayerState).Assembly.GetName().Version}");
+        report.AppendLine($"Widest availability badge seen: {FishEntryRowNode.WidestBadgeMeasured:0}px \"{FishEntryRowNode.WidestBadgeText}\"");
         report.AppendLine($"Normal-log return: {normalLog.ReturnStatus}");
         report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}; areaDropdownWidth={configuration.NativeAreaDropdownWidth:0.#}");
         report.AppendLine($"Replacement={configuration.ReplaceNormalFishingLog}; loggedIn={Services.ClientState.IsLoggedIn}; explicit={normalLog.AllowExplicitVanillaLog}; seenVisible={normalLog.WasNormalLogVisible}; closeQueued={normalLog.IsCloseQueued}; customOpen={windowManager.IsNativeJournalOpen}");
