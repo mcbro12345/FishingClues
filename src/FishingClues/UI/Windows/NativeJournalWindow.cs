@@ -152,7 +152,7 @@ public sealed partial class NativeJournalWindow(
         foreach (JournalRegion region in regions)
         {
             JournalRegion captured = region;
-            var regionButton = new ListButtonNode
+            var regionButton = new AutoFitListButtonNode
             {
                 Height = 25.0f,
                 String = region.IsUnlocked ? region.Name : "???",
@@ -314,8 +314,49 @@ public sealed partial class NativeJournalWindow(
         if (!IsOpen)
             return;
 
+        // Relaying out the lists below resets their scroll to the top as a side
+        // effect, and a settings change doesn't otherwise touch the currently open
+        // fish - preserve both here so toggling a setting doesn't visibly reset
+        // the journal the player is looking at.
+        float regionScroll = regionList?.ScrollBarNode.ScrollPosition ?? 0;
+        float areaScroll = areaList?.ScrollBarNode.ScrollPosition ?? 0;
+        float fishScroll = fishList?.ScrollBarNode.ScrollPosition ?? 0;
+        float detailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
+
         SetWindowSize(Size);
         LayoutAttachedNodes();
+        RefreshSelectedDetails();
+
+        if (regionList is not null) RestoreScroll(regionList, regionScroll);
+        if (areaList is not null) RestoreScroll(areaList, areaScroll);
+        if (fishList is not null) RestoreScroll(fishList, fishScroll);
+        if (detailsList is not null) RestoreScroll(detailsList, detailsScroll);
+    }
+
+    // Settings such as the 12-hour time format or the availability countdown only
+    // affect an already-open fish's details when re-rendered here; otherwise the
+    // open panel keeps showing whatever text was built when the fish was clicked.
+    private void RefreshSelectedDetails()
+    {
+        if (selectedFish == 0) return;
+        JournalFish? fish = GuideMode
+            ? guideFish?.FirstOrDefault(f => f.FishParameterId == selectedFish)
+            : selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == selectedFish);
+        if (fish is null) return;
+
+        selectedDetails = buildDetails(fish);
+        if (guideDetails is not null)
+        {
+            string? locationLabel = guideLocation?.Label;
+            string? poleLabel = guidePole?.Label;
+            selectedGuide = guideDetails(fish);
+            guideLocation = locationLabel is null ? selectedGuide.Locations.FirstOrDefault()
+                : selectedGuide.Locations.FirstOrDefault(l => l.Label == locationLabel) ?? selectedGuide.Locations.FirstOrDefault();
+            guidePoles = guideLocation is null ? Array.Empty<FishingPole>() : selectedGuide.GetPoles(guideLocation);
+            guidePole = poleLabel is null ? guidePoles.FirstOrDefault()
+                : guidePoles.FirstOrDefault(p => p.Label == poleLabel) ?? guidePoles.FirstOrDefault();
+        }
+        RenderDetails();
     }
 
     private void LayoutAttachedNodes()
@@ -331,7 +372,6 @@ public sealed partial class NativeJournalWindow(
             var pole = guidePole;
             var poles = guidePoles;
             uint fish = selectedFish;
-            float detailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
             SelectSpot(selectedSpot);
             selectedDetails = details;
             selectedGuide = guide;
@@ -340,8 +380,6 @@ public sealed partial class NativeJournalWindow(
             guidePoles = poles;
             selectedFish = fish;
             UpdateFishSelection();
-            RenderDetails();
-            if (detailsList is not null) RestoreScroll(detailsList, detailsScroll);
         }
 
         contentOrigin = ContentStartPosition;
