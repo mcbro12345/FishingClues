@@ -12,7 +12,6 @@ using FishingClues.Base;
 using FishingClues.Game.Data;
 using FishingClues.Game.Logic;
 using FishingClues.UI;
-using FishingClues.UI.Components;
 
 namespace FishingClues;
 
@@ -71,13 +70,11 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         }
         if (configuration.Version < 10)
         {
-            configuration.NativeAreaDropdownWidth = 999.0f;
             configuration.Version = 10;
         }
         if (configuration.Version < 11)
         {
             configuration.NativeAreaWidth = 350.0f;
-            configuration.NativeAreaDropdownWidth = 310.0f;
             configuration.Version = 11;
         }
         if (configuration.Version < 12)
@@ -88,13 +85,12 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         }
         if (configuration.Version < 13)
         {
-            configuration.NativeAreaDropdownWidth = 999.0f;
             configuration.Version = 13;
         }
-        if (configuration.Version < 14)
+        if (configuration.Version < 15)
         {
-            configuration.NativeWindowWidth = 1150.0f;
-            configuration.Version = 14;
+            configuration.NativeWindowWidth = 1050.0f;
+            configuration.Version = 15;
         }
     }
 
@@ -159,9 +155,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         var report = new StringBuilder();
         report.AppendLine($"Fishing Clues {typeof(Plugin).Assembly.GetName().Version}");
         report.AppendLine($"Client structs: {typeof(PlayerState).Assembly.GetName().Version}");
-        report.AppendLine($"Widest availability badge seen: {FishEntryRowNode.WidestBadgeMeasured:0}px \"{FishEntryRowNode.WidestBadgeText}\"");
         report.AppendLine($"Normal-log return: {normalLog.ReturnStatus}");
-        report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}; areaDropdownWidth={configuration.NativeAreaDropdownWidth:0.#}");
+        report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}; areaDropdownLeftInset={configuration.NativeAreaDropdownLeftInset:0.#}; areaDropdownRightInset={configuration.NativeAreaDropdownRightInset:0.#}");
         report.AppendLine($"Replacement={configuration.ReplaceNormalFishingLog}; loggedIn={Services.ClientState.IsLoggedIn}; explicit={normalLog.AllowExplicitVanillaLog}; seenVisible={normalLog.WasNormalLogVisible}; closeQueued={normalLog.IsCloseQueued}; customOpen={windowManager.IsNativeJournalOpen}");
         try
         {

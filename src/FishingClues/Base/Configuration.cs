@@ -4,17 +4,17 @@ namespace FishingClues.Base;
 
 public sealed class Configuration : IPluginConfiguration
 {
-    public int Version { get; set; } = 14;
+    public int Version { get; set; } = 15;
     public System.Collections.Generic.HashSet<uint> FavoriteFishItemIds { get; set; } = new();
     public System.Collections.Generic.Dictionary<ulong, System.Collections.Generic.HashSet<uint>> RevealedFish { get; set; } = new();
-    // Wide enough that the longest real availability badge (time + weather-after-weather,
-    // each with several options - about 117 characters) fits on one line at the fish
-    // list's default column width.
-    public float NativeWindowWidth { get; set; } = 1150.0f;
+    public float NativeWindowWidth { get; set; } = 1050.0f;
     public float NativeWindowHeight { get; set; } = 680.0f;
     public float NativeRegionWidth { get; set; } = 162.0f;
     public float NativeAreaWidth { get; set; } = 263.0f;
-    public float NativeAreaDropdownWidth { get; set; } = 999.0f;
+    // How far the area dropdown boxes are inset from the left/right edges of the
+    // area column; 0 on both sides means the dropdown fills the column.
+    public float NativeAreaDropdownLeftInset { get; set; }
+    public float NativeAreaDropdownRightInset { get; set; }
     public bool AutoRefreshFishData { get; set; } = true;
     public bool DisableAvailabilityCountdown { get; set; }
     public bool Use12HourTime { get; set; }
