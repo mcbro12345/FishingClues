@@ -97,10 +97,10 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
         ImGui.TextWrapped(refreshStatus());
         ImGui.TextWrapped("Downloads catch conditions from Fish Tracker and GatherBuddy. New discoveries appear when their maintainers publish them.");
         ImGui.Spacing();
-        if (ImGui.Button("Open diagnostic report")) openDiagnostics();
-        ImGui.Spacing();
         ImGui.Separator();
         ImGui.TextDisabled("DEBUG");
+        if (ImGui.Button("Open diagnostic report")) openDiagnostics();
+        ImGui.Spacing();
         bool revealEverything = configuration.DebugRevealEverything;
         if (ImGui.Checkbox("Show every location and fish as unlocked", ref revealEverything))
         {
