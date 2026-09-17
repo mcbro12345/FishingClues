@@ -40,7 +40,7 @@ Used under the MIT License. Additional fish metadata used by the all-fish guide 
 
 Upstream project: Teamcraft (`ffxivteamcraft.com`).
 
-License: `src/FishingClues/TEAMCRAFT_LICENSE.txt`.
+License: `FishingClues/TEAMCRAFT_LICENSE.txt`.
 
 ## Scope of the Fishing Clues license
 

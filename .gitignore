@@ -29,3 +29,6 @@ devPlugins/
 *.nupkg
 *.snupkg
 packages/
+
+# Local patch-delivery scratch output
+/dist/

@@ -28,7 +28,7 @@ jobs:
           Expand-Archive -Path "$env:TEMP\dalamud-latest.zip" -DestinationPath $dest -Force
 
       - name: Restore
-        run: dotnet restore src/FishingClues/FishingClues.csproj
+        run: dotnet restore FishingClues/FishingClues.csproj
 
       - name: Build
-        run: dotnet build src/FishingClues/FishingClues.csproj -c Release --no-restore
+        run: dotnet build FishingClues/FishingClues.csproj -c Release --no-restore

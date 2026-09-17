@@ -4,7 +4,7 @@ import vm from 'node:vm';
 const sourcePath = new URL('../vendor/ff14-fish-tracker-app/js/app/data.js', import.meta.url);
 const infoSourcePath = new URL('../vendor/ff14-fish-tracker-app/js/app/fish_info_data.js', import.meta.url);
 const gatherBuddyFishPath = new URL('../vendor/GatherBuddy/GatherBuddy.GameData/Data/Fish/', import.meta.url);
-const outputPath = new URL('../src/FishingClues/FishConditions.json', import.meta.url);
+const outputPath = new URL('../FishingClues/FishConditions.json', import.meta.url);
 const source = fs.readFileSync(sourcePath, 'utf8') + '\n;globalThis.__fishData = DATA;';
 const context = {};
 vm.createContext(context);
@@ -128,5 +128,5 @@ const info = Object.fromEntries(fishInfoRows.map(row => [String(row.id), {
   rarity: row.rarity ?? 0,
 }]));
 
-fs.mkdirSync(new URL('../src/FishingClues/', import.meta.url), { recursive: true });
+fs.mkdirSync(new URL('../FishingClues/', import.meta.url), { recursive: true });
 fs.writeFileSync(outputPath, JSON.stringify({ schemaVersion: 1, fish, items, weather, folklore, info }));

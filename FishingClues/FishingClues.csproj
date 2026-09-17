@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../../vendor/KamiToolKit/KamiToolKit.csproj" />
+    <ProjectReference Include="../vendor/KamiToolKit/KamiToolKit.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -20,8 +20,8 @@
     <Content Include="THIRD_PARTY_LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="GATHERBUDDY_LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="TEAMCRAFT_LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../../AI-GENERATED-NOTICE.md" Link="AI-GENERATED-NOTICE.md" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../AI-GENERATED-NOTICE.md" Link="AI-GENERATED-NOTICE.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- KamiToolKit copies its whole Assets folder (color-picker textures) and
