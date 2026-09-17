@@ -2,7 +2,7 @@
   "Author": "mcbro",
   "Name": "Fishing Clues",
   "InternalName": "FishingClues",
-  "AssemblyVersion": "3.20.31.0",
+  "AssemblyVersion": "3.20.32.0",
   "Description": "A better Fishing Log: spoiler-conscious, and packed with the info you actually need to find and catch fish.",
   "ApplicableVersion": "any",
   "Tags": ["fishing", "log", "completion", "spoiler-free"],
