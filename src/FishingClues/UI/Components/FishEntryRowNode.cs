@@ -12,19 +12,9 @@ public sealed class FishEntryRowNode : ListButtonNode
 {
     private const float CompactHeight = 44.0f;
     private const int WrappedBadgeTextLengthThreshold = 16;
-    // The longest real availability badge (a fish gated on both a time window and
-    // weather-after-weather, each with several options) runs to roughly 117
-    // characters. The badge always renders at this size, and the journal's default
-    // width is sized to fit that worst case on one line - see NativeWindowWidth.
-    private const uint BadgeFontSize = 8;
+    private const uint BadgeFontSize = 12;
 
     private const float IconSize = 38.0f;
-
-    // The widest availability badge actually measured at BadgeFontSize, in the
-    // game's own font metrics - not an estimate. Read by the diagnostics report so
-    // real numbers can replace the ~117-character guess NativeWindowWidth is based on.
-    public static float WidestBadgeMeasured { get; private set; }
-    public static string WidestBadgeText { get; private set; } = "";
 
     private readonly IconImageNode fishIcon;
     private readonly LabelTextNode unknownIcon;
@@ -100,17 +90,10 @@ public sealed class FishEntryRowNode : ListButtonNode
         }
         availabilityWrapped = wrapped;
         availabilityBadge.AlignmentType = wrapped ? AlignmentType.Left : AlignmentType.Right;
-        availabilityBadge.TextFlags = TextFlags.Ellipsis;
+        availabilityBadge.TextFlags = wrapped ? TextFlags.WordWrap | TextFlags.MultiLine : TextFlags.Ellipsis;
         availabilityBadge.TextColor = available ? new Vector4(0.45f, 0.95f, 0.45f, 1f) : new Vector4(0.95f, 0.4f, 0.4f, 1f);
         availabilityBadge.TextTooltip = tooltip;
         availabilityBadge.String = text;
-
-        float naturalWidth = availabilityBadge.GetTextDrawSize(text, considerScale: false).X;
-        if (naturalWidth > WidestBadgeMeasured)
-        {
-            WidestBadgeMeasured = naturalWidth;
-            WidestBadgeText = text;
-        }
 
         OnSizeChanged();
     }
@@ -152,8 +135,9 @@ public sealed class FishEntryRowNode : ListButtonNode
         const float lineGap = 0.0f;
         float stackHeight = nameHeight + lineGap + textHeight;
         float contentHeight = Math.Max(IconSize, stackHeight);
-        // keep wrapped rows the same height as compact ones, just centered
-        float desiredHeight = CompactHeight;
+        // wrapped rows match the compact height when they fit; if the availability
+        // text needs a second (or third) line, grow the row instead of clipping it
+        float desiredHeight = Math.Max(CompactHeight, contentHeight);
         float margin = Math.Max(0.0f, (desiredHeight - contentHeight) / 2.0f);
 
         float wrappedIconY = margin + (contentHeight - IconSize) / 2.0f;
