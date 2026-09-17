@@ -9,8 +9,8 @@ A Dalamud plugin for FFXIV that gives you a better Fishing Log: spoiler-consciou
 - Hides fish and fishing holes you haven't discovered yet, so you don't get spoiled
 - Shows the catch details that matter per fish: bait paths, weather, time windows, intuition requirements, hookset/tug info, snagging, lures, spearfishing data
 - Shows an uptime indicator next to fish with a time or weather window, including fish you haven't discovered yet, with a tooltip explaining exactly what it's waiting on
-- Searchable all-fish guide with mooch paths and per-hole bait recommendations, which remembers its search and selected fish between opens
-- Native UI, built on KamiToolKit, with a resizable fish/details divider (lockable in settings)
+- Searchable all-fish guide with mooch per-hole bait recommendations
+- Native UI, built on KamiToolKit
 - Optionally replace the default Fishing Log (on by default upon install), or keep it and open the custom journal with its own keybind instead
 
 ## Commands
