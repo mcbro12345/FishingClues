@@ -188,8 +188,12 @@ public sealed class AvailabilityService
         return candidates.Count == 0 ? null : candidates.Min();
     }
 
-    // an end landing exactly on the window boundary means "keeps going", not a real
-    // end - the caller re-checks weather for the next window in that case
+    // A condition's end hour landing exactly on the weather band boundary is only
+    // ambiguous when the condition's real end is further out and got clipped to the
+    // band - then the caller re-checks weather for the next band before concluding
+    // the fish stays available. When the real end hour IS the band boundary, there is
+    // nothing left to check and this is the true end, even though it also lands on
+    // windowEnd.
     private static long? TimeWindowEndWithin(long windowStart, double startHour, double endHour, long earliestAllowed, long windowEnd)
     {
         if (startHour == 0 && endHour == 24) return null;
@@ -197,7 +201,7 @@ public sealed class AvailabilityService
         double bandStart = EorzeaWeather.EorzeaHourOfDay(windowStart);
         double bandEnd = bandStart + 8;
 
-        long? EndOf(double s, double e)
+        (long End, bool ClippedByBand)? EndOf(double s, double e)
         {
             double overlapStart = Math.Max(s, bandStart);
             double overlapEnd = Math.Min(e, bandEnd);
@@ -205,11 +209,12 @@ public sealed class AvailabilityService
             long candidateStart = windowStart + (long)Math.Round((overlapStart - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
             long candidateEnd = windowStart + (long)Math.Round((overlapEnd - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
             if (candidateStart > earliestAllowed || candidateEnd <= earliestAllowed) return null;
-            return candidateEnd;
+            return (candidateEnd, e > bandEnd);
         }
 
-        long? end = startHour <= endHour ? EndOf(startHour, endHour) : EndOf(startHour, 24) ?? EndOf(0, endHour);
-        return end is long e && e < windowEnd ? e : null;
+        var result = startHour <= endHour ? EndOf(startHour, endHour) : EndOf(startHour, 24) ?? EndOf(0, endHour);
+        if (result is not (long end, bool clippedByBand)) return null;
+        return clippedByBand && end == windowEnd ? null : end;
     }
 
     private static string FormatCountdown(TimeSpan span)
