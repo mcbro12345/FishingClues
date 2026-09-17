@@ -129,7 +129,7 @@ public sealed class FishDetailsFormatter
         int hour = minutesOfDay / 60, minute = minutesOfDay % 60;
         if (!configuration.Use12HourTime) return $"{hour:00}:{minute:00}";
         int hour12 = hour % 12 == 0 ? 12 : hour % 12;
-        return $"{hour12}:{minute:00} {(hour < 12 ? "AM" : "PM")}";
+        return $"{hour12}:{minute:00}{(hour < 12 ? "am" : "pm")}";
     }
 
     private static string FormatHook(FishCondition condition)
