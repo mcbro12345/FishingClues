@@ -260,6 +260,23 @@ public sealed partial class NativeJournalWindow(
         return handle;
     }
 
+    // AddEvent(MouseDown, ...) marks a node HasCollision so it blocks whatever's
+    // behind it from ever seeing the click - by design, so dragging a divider
+    // doesn't also click through to the fish list underneath it. That collision
+    // flag isn't tied to IsVisible, though, so a "locked" (invisible) handle was
+    // still silently swallowing clicks meant for anything under its strip - which
+    // is exactly where the area dropdown boxes sit once they're inset far enough
+    // to reach the region/area gap. This turns collision off along with
+    // visibility so a locked handle stops intercepting clicks entirely.
+    private static void SetDividerHandleInteractive(CollisionNode handle, bool interactive)
+    {
+        handle.IsVisible = interactive;
+        if (interactive)
+            handle.AddNodeFlags(NodeFlags.EmitsEvents, NodeFlags.RespondToMouse, NodeFlags.HasCollision);
+        else
+            handle.RemoveNodeFlags(NodeFlags.HasCollision, NodeFlags.RespondToMouse, NodeFlags.EmitsEvents);
+    }
+
     private unsafe void BeginDividerDrag(int kind)
     {
         var framework = Framework.Instance();
@@ -442,7 +459,7 @@ public sealed partial class NativeJournalWindow(
             detailsDivider.IsVisible = true;
             if (dividerHandle is not null)
             {
-                dividerHandle.IsVisible = !configuration.IsDividerLocked(0);
+                SetDividerHandleInteractive(dividerHandle, !configuration.IsDividerLocked(0));
                 dividerHandle.ShowClickableCursor = false;
                 dividerHandle.Position = fishList.Position + new Vector2(0, fishHeight);
                 dividerHandle.Size = new Vector2(fishWidth, 12);
@@ -462,14 +479,14 @@ public sealed partial class NativeJournalWindow(
         {
             regionDividerHandle.Position = contentOrigin + new Vector2(regionWidth, 0);
             regionDividerHandle.Size = new Vector2(ColumnGap, ContentSize.Y);
-            regionDividerHandle.IsVisible = !configuration.IsDividerLocked(1);
+            SetDividerHandleInteractive(regionDividerHandle, !configuration.IsDividerLocked(1));
             regionDividerHandle.ShowClickableCursor = false;
         }
         if (areaDividerHandle is not null)
         {
             areaDividerHandle.Position = contentOrigin + new Vector2(regionWidth + areaWidth + ColumnGap, 0);
             areaDividerHandle.Size = new Vector2(ColumnGap, ContentSize.Y);
-            areaDividerHandle.IsVisible = !configuration.IsDividerLocked(2);
+            SetDividerHandleInteractive(areaDividerHandle, !configuration.IsDividerLocked(2));
             areaDividerHandle.ShowClickableCursor = false;
         }
         if (normalLogButton is not null)
