@@ -152,7 +152,7 @@ public sealed partial class NativeJournalWindow(
         foreach (JournalRegion region in regions)
         {
             JournalRegion captured = region;
-            var regionButton = new AutoFitListButtonNode
+            var regionButton = new ListButtonNode
             {
                 Height = 25.0f,
                 String = region.IsUnlocked ? region.Name : "???",
