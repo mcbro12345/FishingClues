@@ -24,4 +24,11 @@
     <Content Include="../../AI-GENERATED-NOTICE.md" Link="AI-GENERATED-NOTICE.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- KamiToolKit copies its whole Assets folder (color-picker textures) into
+       every project that references it, whether or not that project uses the
+       color picker. This plugin doesn't, so drop it before packaging. -->
+  <Target Name="RemoveUnusedKamiToolKitAssets" BeforeTargets="DefaultDalamudPackagerRelease;DefaultDalamudPackagerDebug">
+    <RemoveDir Directories="$(OutDir)Assets" Condition="Exists('$(OutDir)Assets')" />
+  </Target>
 </Project>
