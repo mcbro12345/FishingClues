@@ -7,13 +7,28 @@ namespace FishingClues;
 
 public sealed record FishAvailabilityInfo(bool AvailableNow, string BadgeText, string Tooltip);
 
-public sealed partial class Plugin
+// Turns a fish's time/weather requirements into the "available now" or
+// "waiting for..." badge shown next to it in the journal.
+public sealed class AvailabilityService
 {
     private const int MaxAvailabilityWindowsToScan = 216; // ~3.5 real days of weather windows.
 
-    private FishAvailabilityInfo? GetFishAvailability(JournalFish fish)
+    private readonly FishDataService fishData;
+    private readonly JournalBuilder journal;
+    private readonly FishDetailsFormatter formatter;
+    private readonly Configuration configuration;
+
+    public AvailabilityService(FishDataService fishData, JournalBuilder journal, FishDetailsFormatter formatter, Configuration configuration)
     {
-        if (!data.Fish.TryGetValue(fish.ItemId, out FishCondition? condition) || !condition.RequirementsKnown)
+        this.fishData = fishData;
+        this.journal = journal;
+        this.formatter = formatter;
+        this.configuration = configuration;
+    }
+
+    public FishAvailabilityInfo? GetAvailability(JournalFish fish)
+    {
+        if (!fishData.Data.Fish.TryGetValue(fish.ItemId, out FishCondition? condition) || !condition.RequirementsKnown)
             return null;
         bool timeGated = condition.StartHour != 0 || condition.EndHour != 24;
         bool weatherGated = condition.Weather.Count > 0;
@@ -25,7 +40,7 @@ public sealed partial class Plugin
         if (weatherGated || prevWeatherGated)
         {
             uint? territoryId = ResolveTerritoryId(fish);
-            if (territoryId is not uint tId || !DataManager.GetExcelSheet<TerritoryType>().TryGetRow(tId, out TerritoryType territory) || territory.WeatherRate.RowId == 0)
+            if (territoryId is not uint tId || !Services.DataManager.GetExcelSheet<TerritoryType>().TryGetRow(tId, out TerritoryType territory) || territory.WeatherRate.RowId == 0)
                 return null;
             weatherRateId = territory.WeatherRate.RowId;
         }
@@ -41,14 +56,14 @@ public sealed partial class Plugin
         string? WeatherClause()
         {
             if (!weatherGated && !prevWeatherGated) return null;
-            string current = weatherGated ? FormatWeather(condition.Weather, "any weather") : "any weather";
-            return prevWeatherGated ? $"{current} after {FormatWeather(condition.PreviousWeather, "any weather")}" : current;
+            string current = weatherGated ? formatter.FormatWeather(condition.Weather, "any weather") : "any weather";
+            return prevWeatherGated ? $"{current} after {formatter.FormatWeather(condition.PreviousWeather, "any weather")}" : current;
         }
 
         if (timeOk && weatherOk && prevOk)
         {
             var met = new List<string>();
-            if (timeGated) met.Add(FormatTime(condition.StartHour, condition.EndHour));
+            if (timeGated) met.Add(formatter.FormatTime(condition.StartHour, condition.EndHour));
             if (WeatherClause() is string metWeather) met.Add(metWeather);
             string availableTooltip = met.Count == 0 ? "Now available." : $"Now available due to {string.Join(" and ", met)}.";
 
@@ -61,7 +76,7 @@ public sealed partial class Plugin
         }
 
         var waitingFor = new List<string>();
-        if (timeGated) waitingFor.Add(FormatTime(condition.StartHour, condition.EndHour));
+        if (timeGated) waitingFor.Add(formatter.FormatTime(condition.StartHour, condition.EndHour));
         if (WeatherClause() is string waitingWeather) waitingFor.Add(waitingWeather);
         string waitingText = waitingFor.Count == 0 ? "conditions to line up" : string.Join(" and ", waitingFor);
         string tooltip = $"Waiting for {waitingText}.";
@@ -78,19 +93,19 @@ public sealed partial class Plugin
     {
         if (fish.SpotId != 0)
         {
-            JournalSpot? spot = GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots).FirstOrDefault(s => s.Id == fish.SpotId);
+            JournalSpot? spot = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots).FirstOrDefault(s => s.Id == fish.SpotId);
             if (spot is not null) return spot.TerritoryId;
         }
-        FishLocation? location = data.Locations.FirstOrDefault(l => l.ItemId == fish.ItemId);
+        FishLocation? location = fishData.Data.Locations.FirstOrDefault(l => l.ItemId == fish.ItemId);
         if (location is null) return null;
-        foreach (TerritoryType territory in DataManager.GetExcelSheet<TerritoryType>())
+        foreach (TerritoryType territory in Services.DataManager.GetExcelSheet<TerritoryType>())
             if (territory.Map.RowId == location.MapId) return territory.RowId;
         return null;
     }
 
-    private uint? GetWeatherId(uint weatherRateId, byte target)
+    private static uint? GetWeatherId(uint weatherRateId, byte target)
     {
-        if (weatherRateId == 0 || !DataManager.GetExcelSheet<WeatherRate>().TryGetRow(weatherRateId, out WeatherRate row))
+        if (weatherRateId == 0 || !Services.DataManager.GetExcelSheet<WeatherRate>().TryGetRow(weatherRateId, out WeatherRate row))
             return null;
         byte cumulative = 0;
         foreach (var (rate, weather) in row.Rate.Zip(row.Weather))
@@ -102,14 +117,14 @@ public sealed partial class Plugin
         return null;
     }
 
-    private bool WeatherMatchesAt(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long ws)
+    private static bool WeatherMatchesAt(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long ws)
     {
         bool weatherOk = !weatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws)) is uint w && condition.Weather.Contains(w));
         if (!weatherOk) return false;
         return !prevWeatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws - EorzeaWeather.SecondsPerWeatherWindow)) is uint pw && condition.PreviousWeather.Contains(pw));
     }
 
-    private long? FindNextAvailability(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long now)
+    private static long? FindNextAvailability(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long now)
     {
         long windowStart = EorzeaWeather.WindowStart(now);
         for (int i = 0; i < MaxAvailabilityWindowsToScan; i++)
@@ -122,7 +137,7 @@ public sealed partial class Plugin
         return null;
     }
 
-    private long? FindAvailabilityEnd(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, bool timeGated, long now)
+    private static long? FindAvailabilityEnd(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, bool timeGated, long now)
     {
         long windowStart = EorzeaWeather.WindowStart(now);
         for (int i = 0; i < MaxAvailabilityWindowsToScan; i++)
@@ -200,4 +215,5 @@ public sealed partial class Plugin
         if (span.TotalDays < 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
         return $"{(int)span.TotalDays}d {span.Hours}h";
     }
+
 }

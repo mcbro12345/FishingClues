@@ -1,75 +1,106 @@
+using Dalamud.Game.NativeWrapper;
 using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Numerics;
-using System.Text.Json;
-using System.Text;
-using System.Threading.Tasks;
-using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.ClientState.Keys;
-using Dalamud.Game.Command;
-using Dalamud.Game.Gui.ContextMenu;
-using Dalamud.Game.NativeWrapper;
-using Dalamud.Interface.Windowing;
-using Dalamud.IoC;
 using Dalamud.Hooking;
-using Dalamud.Plugin;
-using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using KamiToolKit;
-using FishParameterSheet = Lumina.Excel.Sheets.FishParameter;
-using FishingSpotSheet = Lumina.Excel.Sheets.FishingSpot;
 using MainCommandSheet = Lumina.Excel.Sheets.MainCommand;
-using ItemSheet = Lumina.Excel.Sheets.Item;
-using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-public sealed partial class Plugin
+// Intercepts the vanilla Fishing Log - both the menu command and the addon
+// itself - and swaps it for the native journal, then hands control back
+// when the player explicitly asks for the real thing.
+public sealed class NormalLogReplacementController
 {
-    private unsafe void OnFrameworkUpdate(IFramework framework)
-    {
-        if (configuration.AutoRefreshFishData && DateTime.UtcNow >= nextDataCheck)
-        {
-            nextDataCheck = DateTime.UtcNow.AddDays(1);
-            if (!File.Exists(DataCachePath) || DateTime.UtcNow - File.GetLastWriteTimeUtc(DataCachePath) >= TimeSpan.FromDays(1))
-                _ = RefreshFishDataAsync();
-        }
+    private readonly Configuration configuration;
+    private readonly WindowManager windowManager;
 
-        ObserveVanillaRegionLabels();
-        bool journalOpenNow = nativeJournal?.IsOpen == true;
-        if (nativeJournalWasOpen && !journalOpenNow)
+    private delegate void ExecuteMainCommandDelegate(nint module, uint command);
+    private Hook<ExecuteMainCommandDelegate>? mainCommandHook;
+    private uint fishingLogCommandId;
+
+    private bool allowExplicitVanillaLog;
+    private bool menuOpenRequested;
+    private bool replacementRequested;
+    private JournalSpot? pendingNormalLogSpot;
+    private long pendingNormalLogUntil;
+    private long pendingNormalLogSelectionAppliedAt;
+    private bool normalLogWasVisible;
+    private bool normalLogCloseRequested;
+    private bool normalLogReturnPending;
+    private long normalLogReturnAfter;
+    private long lastReplacement;
+
+    public string ReturnStatus { get; private set; } = "No normal-log close observed.";
+    public bool AllowExplicitVanillaLog => allowExplicitVanillaLog;
+    public bool WasNormalLogVisible => normalLogWasVisible;
+    public bool IsCloseQueued => normalLogCloseRequested;
+
+    public NormalLogReplacementController(Configuration configuration, WindowManager windowManager, JournalBuilder journal)
+    {
+        this.configuration = configuration;
+        this.windowManager = windowManager;
+        journal.CharacterChanged += () =>
         {
-            if (nativeGuide?.IsOpen == true)
-            {
-                guideAutoClosedByLog = true;
-                nativeGuide.Close();
-            }
-        }
-        else if (journalOpenNow && guideAutoClosedByLog)
+            normalLogReturnPending = false;
+            normalLogWasVisible = false;
+            normalLogCloseRequested = false;
+        };
+        Services.AddonLifecycle.RegisterListener(AddonEvent.PostSetup, "FishingNote", OnFishingNoteIntercept);
+        Services.AddonLifecycle.RegisterListener(AddonEvent.PreDraw, "FishingNote", OnFishingNoteIntercept);
+        Services.AddonLifecycle.RegisterListener(AddonEvent.PostHide, "FishingNote", OnNormalLogClosed);
+        Services.AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, "FishingNote", OnNormalLogClosed);
+        InitializeMainCommandHook();
+    }
+
+    public void Dispose()
+    {
+        mainCommandHook?.Dispose();
+        Services.AddonLifecycle.UnregisterListener(OnFishingNoteIntercept);
+        Services.AddonLifecycle.UnregisterListener(OnNormalLogClosed);
+    }
+
+    // called after the hook above is disposed, so this reaches the game's own handler
+    public unsafe void RestoreVanillaLog()
+    {
+        if (fishingLogCommandId == 0) return;
+        UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
+        if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
+    }
+
+    private unsafe void InitializeMainCommandHook()
+    {
+        try
         {
-            guideAutoClosedByLog = false;
-            _ = OpenGuideAsync();
+            fishingLogCommandId = Services.DataManager.GetExcelSheet<MainCommandSheet>()
+                .FirstOrDefault(row => row.Name.ToString().Equals("Fishing Log", StringComparison.OrdinalIgnoreCase)).RowId;
+            UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
+            if (fishingLogCommandId == 0 || module == null) return;
+            mainCommandHook = Services.GameInteropProvider.HookFromAddress<ExecuteMainCommandDelegate>(
+                (nint)module->VirtualTable->ExecuteMainCommand, ExecuteMainCommandDetour);
+            mainCommandHook.Enable();
         }
-        nativeJournalWasOpen = journalOpenNow;
-        if (configuration.JournalKeybindEnabled && configuration.JournalKeybindKey != 0 && !configuration.ReplaceNormalFishingLog)
+        catch (Exception ex) { Services.Log.Error(ex, "Fishing Log menu interception unavailable; using addon interception."); }
+    }
+
+    private void ExecuteMainCommandDetour(nint module, uint command)
+    {
+        if (!allowExplicitVanillaLog && configuration.ReplaceNormalFishingLog && command == fishingLogCommandId)
         {
-            var key = (VirtualKey)configuration.JournalKeybindKey;
-            bool down = KeyState.IsVirtualKeyValid(key) && KeyState[key]
-                && (!configuration.JournalKeybindCtrl || KeyState[VirtualKey.CONTROL])
-                && (!configuration.JournalKeybindAlt || KeyState[VirtualKey.MENU])
-                && (!configuration.JournalKeybindShift || KeyState[VirtualKey.SHIFT]);
-            if (down && !journalKeybindWasDown && ClientState.IsLoggedIn)
-                OpenJournal();
-            journalKeybindWasDown = down;
+            menuOpenRequested = true;
+            return;
         }
-        else journalKeybindWasDown = false;
+        mainCommandHook!.Original(module, command);
+    }
+
+    public unsafe void OnFrameworkUpdate()
+    {
         if (menuOpenRequested)
         {
             menuOpenRequested = false;
@@ -83,35 +114,35 @@ public sealed partial class Plugin
             if (normalLog != null && ((AgentInterface*)normalLog)->IsAgentActive())
                 ((AgentInterface*)normalLog)->Hide();
             lastReplacement = Environment.TickCount64;
-            ToggleReplacementJournal();
+            windowManager.ToggleNativeJournal();
             return;
         }
         ApplyPendingNormalLogSelection();
         long now = Environment.TickCount64;
         AgentFishingNote* agent = AgentFishingNote.Instance();
-        AtkUnitBasePtr ptr = GameGui.GetAddonByName("FishingNote");
+        AtkUnitBasePtr ptr = Services.GameGui.GetAddonByName("FishingNote");
         bool agentActive = agent != null && ((AgentInterface*)agent)->IsAgentActive();
         bool addonVisible = !ptr.IsNull && ptr.IsVisible;
         if (normalLogReturnPending)
         {
             replacementRequested = false;
             normalLogCloseRequested = false;
-            if (!configuration.ReplaceNormalFishingLog || !ClientState.IsLoggedIn)
+            if (!configuration.ReplaceNormalFishingLog || !Services.ClientState.IsLoggedIn)
             {
                 normalLogReturnPending = false;
-                normalLogReturnStatus = "Pending return cancelled: replacement disabled or logged out.";
+                ReturnStatus = "Pending return cancelled: replacement disabled or logged out.";
             }
             else if (now >= normalLogReturnAfter && !addonVisible)
             {
                 // Close(false) is async; wait for the old addon to actually go away
-                var previous = GameGui.GetAddonByName("FishingCluesJournalNative");
+                var previous = Services.GameGui.GetAddonByName("FishingCluesJournalNative");
                 if (previous.IsNull)
                 {
                     normalLogReturnPending = false;
                     lastReplacement = now;
                     _ = ReturnFromNormalLogAsync();
                 }
-                else normalLogReturnStatus = "Waiting for previous custom journal to finish closing.";
+                else ReturnStatus = "Waiting for previous custom journal to finish closing.";
             }
             return;
         }
@@ -125,16 +156,16 @@ public sealed partial class Plugin
             allowExplicitVanillaLog = false;
             replacementRequested = false;
             pendingNormalLogSpot = null;
-            if (configuration.ReplaceNormalFishingLog && ClientState.IsLoggedIn)
+            if (configuration.ReplaceNormalFishingLog && Services.ClientState.IsLoggedIn)
             {
                 if (agentActive) ((AgentInterface*)agent)->Hide();
                 lastReplacement = now;
-                normalLogReturnStatus = "Close observed; waiting for window teardown.";
+                ReturnStatus = "Close observed; waiting for window teardown.";
                 normalLogReturnPending = true;
                 normalLogReturnAfter = now + 150;
-                CloseReplacementJournal();
+                windowManager.CloseNativeJournal();
             }
-            else normalLogReturnStatus = $"Close observed; skipped (replacement={configuration.ReplaceNormalFishingLog}, loggedIn={ClientState.IsLoggedIn}).";
+            else ReturnStatus = $"Close observed; skipped (replacement={configuration.ReplaceNormalFishingLog}, loggedIn={Services.ClientState.IsLoggedIn}).";
             return;
         }
         if (allowExplicitVanillaLog)
@@ -143,7 +174,7 @@ public sealed partial class Plugin
         {
             replacementRequested = false;
             lastReplacement = now;
-            ToggleReplacementJournal();
+            windowManager.ToggleNativeJournal();
             return;
         }
         if (!configuration.ReplaceNormalFishingLog || now - lastReplacement < 1000)
@@ -159,7 +190,7 @@ public sealed partial class Plugin
             if (addon != null && addon->IsReady)
                 addon->Close(true);
         }
-        ToggleReplacementJournal();
+        windowManager.ToggleNativeJournal();
     }
 
     private unsafe void OnFishingNoteIntercept(AddonEvent eventType, AddonArgs args)
@@ -184,50 +215,42 @@ public sealed partial class Plugin
         if (allowExplicitVanillaLog || normalLogWasVisible)
         {
             normalLogCloseRequested = true;
-            normalLogReturnStatus = $"Received {eventType}; return queued.";
+            ReturnStatus = $"Received {eventType}; return queued.";
         }
     }
 
-    private async Task ReturnFromNormalLogAsync()
+    private async System.Threading.Tasks.Task ReturnFromNormalLogAsync()
     {
-        await OpenNativeJournalAsync();
-        normalLogReturnStatus = nativeJournal?.IsOpen == true
+        await windowManager.OpenNativeJournalAsync();
+        ReturnStatus = windowManager.IsNativeJournalOpen
             ? "Custom journal reopened."
             : "Open requested, but custom addon is not visible; check plugin log for setup errors.";
     }
 
-    private static uint GetFishingLogIconId()
-    {
-        foreach (MainCommandSheet action in DataManager.GetExcelSheet<MainCommandSheet>())
-        {
-            if (action.Name.ToString().Equals("Fishing Log", StringComparison.OrdinalIgnoreCase))
-                return (uint)action.Icon;
-        }
-        return 0;
-    }
-
-    private unsafe void OpenNormalFishingLog()
+    public unsafe void OpenNormalFishingLog()
     {
         AgentFishingNote* agent = AgentFishingNote.Instance();
         if (agent == null)
             return;
-        CloseReplacementJournal();
+        windowManager.CloseNativeJournal();
         normalLogReturnPending = false;
         normalLogCloseRequested = false;
         allowExplicitVanillaLog = true;
-        normalLogReturnStatus = "Normal log explicitly opened; waiting for close.";
+        ReturnStatus = "Normal log explicitly opened; waiting for close.";
         pendingNormalLogUntil = Environment.TickCount64 + 5000;
         pendingNormalLogSelectionAppliedAt = 0;
         pendingNormalLogSpot = null;
         replacementRequested = false;
         // Agent.Show alone can leave an empty shell if the command was intercepted before
-        if (fishingLogCommandId != 0) {
+        if (fishingLogCommandId != 0)
+        {
             UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
             if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
-        } else ((AgentInterface*)agent)->Show();
+        }
+        else ((AgentInterface*)agent)->Show();
     }
 
-    private unsafe static void ConfigureNormalLogRegion(AgentFishingNote* agent, JournalSpot spot)
+    private static unsafe void ConfigureNormalLogRegion(AgentFishingNote* agent, JournalSpot spot)
     {
         bool switchingRegion = agent->SelectedRegionPlaceNameId != spot.RegionPlaceNameId;
         agent->Mode = 0;
@@ -282,11 +305,5 @@ public sealed partial class Plugin
             }
             return;
         }
-    }
-
-    private void CloseReplacementJournal()
-    {
-        if (nativeJournal?.IsOpen == true)
-            nativeJournal.Close();
     }
 }

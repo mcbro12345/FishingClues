@@ -7,24 +7,39 @@ using Lumina.Excel.Sheets;
 
 namespace FishingClues;
 
-public sealed partial class Plugin
+// Builds the fish-guide detail panel: where a fish can be caught, which
+// fishing pole to bring, and what's needed at each location.
+public sealed class GuideDetailsService
 {
+    private readonly FishDataService fishData;
+    private readonly JournalBuilder journal;
+    private readonly FishDetailsFormatter formatter;
     private List<Item>? poleCatalog;
 
-    private GuideDetails BuildGuideDetails(JournalFish fish)
+    public GuideDetailsService(FishDataService fishData, JournalBuilder journal, FishDetailsFormatter formatter)
     {
+        this.fishData = fishData;
+        this.journal = journal;
+        this.formatter = formatter;
+    }
+
+    public GuideDetails BuildGuideDetails(JournalFish fish)
+    {
+        FishDataFile data = fishData.Data;
         var info = new List<string>();
         var metadata = data.Info.GetValueOrDefault(fish.ItemId) ?? fish.Info;
         if ((fish.SpotId == 0 || fish.IdentityVisible) && !string.IsNullOrWhiteSpace(metadata?.Description)) info.Add(metadata.Description);
         var locations = new List<GuideLocation>();
-        var spots = GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots)
+        var spots = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots)
             .Where(s => s.Fish.Any(f => f.ItemId == fish.ItemId) && (fish.SpotId == 0 || fish.SpotId == s.Id)).ToArray();
         foreach (var spot in spots) locations.Add(new GuideLocation(spot.Id, spot.Region, spot.Area, spot.Name));
-        if (fish.SpotId == 0) {
+        if (fish.SpotId == 0)
+        {
             foreach (var location in data.Locations.Where(l => l.ItemId == fish.ItemId &&
-                (l.Spearfishing || !spots.Any(s => s.Id == l.SpotId)))) {
-                string Place(uint id) => DataManager.GetExcelSheet<PlaceName>().TryGetRow(id, out var row) ? row.Name.ToString() : "Unknown";
-                uint regionId = DataManager.GetExcelSheet<TerritoryType>().Where(t => t.Map.RowId == location.MapId)
+                (l.Spearfishing || !spots.Any(s => s.Id == l.SpotId))))
+            {
+                string Place(uint id) => Services.DataManager.GetExcelSheet<PlaceName>().TryGetRow(id, out var row) ? row.Name.ToString() : "Unknown";
+                uint regionId = Services.DataManager.GetExcelSheet<TerritoryType>().Where(t => t.Map.RowId == location.MapId)
                     .Select(t => t.PlaceNameRegion.RowId).FirstOrDefault();
                 locations.Add(new GuideLocation(location.SpotId, regionId == 0 ? metadata?.Region ?? "Unknown" : Place(regionId),
                     Place(location.PlaceId), Place(location.ZoneId), location.Spearfishing));
@@ -34,7 +49,7 @@ public sealed partial class Plugin
         if (fish.SpotId == 0 || fish.IdentityVisible) links[fish.Name] = fish.ItemId;
         if (data.SpotBaits.TryGetValue(fish.ItemId, out var baitSpots))
             foreach (var id in baitSpots.Values.SelectMany(b => b.Recommended.Concat(b.Observed)).Distinct())
-                links[ItemName(id)] = id;
+                links[formatter.ItemName(id)] = id;
         return new GuideDetails(fish.IdentityVisible ? fish.Name : "????", info,
             locations.DistinctBy(l => (l.SpotId, l.Spearfishing)).ToArray(),
             location => GetFishingPoles(fish.ItemId, location),
@@ -42,7 +57,8 @@ public sealed partial class Plugin
     }
 
     // these relic fish require a specific pole; ordinary fish don't
-    private static uint RequiredPole(uint fish) => fish switch {
+    private static uint RequiredPole(uint fish) => fish switch
+    {
         38792 or 38793 => 38725,
         38798 or 38799 => 38736,
         39809 or 39810 => 38747,
@@ -53,29 +69,33 @@ public sealed partial class Plugin
     };
 
     private int MinimumGathering(uint fish, uint hole) =>
-        data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(hole, out var entry) ? entry.MinimumGathering : 0;
+        fishData.Data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(hole, out var entry) ? entry.MinimumGathering : 0;
 
     private unsafe IReadOnlyList<FishingPole> GetFishingPoles(uint fish, GuideLocation location)
     {
         if (location.Spearfishing) return Array.Empty<FishingPole>();
-        poleCatalog ??= DataManager.GetExcelSheet<Item>().Where(i => i.EquipSlotCategory.RowId != 0 &&
+        poleCatalog ??= Services.DataManager.GetExcelSheet<Item>().Where(i => i.EquipSlotCategory.RowId != 0 &&
             i.ClassJobCategory.RowId != 0 && i.EquipSlotCategory.Value.MainHand == 1 && i.ClassJobCategory.Value.FSH &&
             !string.IsNullOrWhiteSpace(i.Name.ToString())).ToList();
         var owned = new Dictionary<uint, (int Rank, int Gathering)>();
         var inventory = InventoryManager.Instance();
-        if (inventory != null) {
+        if (inventory != null)
+        {
             foreach (var type in new[] { InventoryType.EquippedItems, InventoryType.Inventory1, InventoryType.Inventory2,
-                InventoryType.Inventory3, InventoryType.Inventory4, InventoryType.ArmoryMainHand }) {
+                InventoryType.Inventory3, InventoryType.Inventory4, InventoryType.ArmoryMainHand })
+            {
                 var container = inventory->GetInventoryContainer(type);
                 if (container == null || !container->IsLoaded || container->Items == null) continue;
-                for (int i = 0; i < container->Size; i++) {
+                for (int i = 0; i < container->Size; i++)
+                {
                     var slot = container->Items + i;
                     uint id = slot->GetBaseItemId();
-                    if (id == 0 || !DataManager.GetExcelSheet<Item>().TryGetRow(id, out var item)) continue;
+                    if (id == 0 || !Services.DataManager.GetExcelSheet<Item>().TryGetRow(id, out var item)) continue;
                     int rank = type == InventoryType.EquippedItems ? 0 : 1;
                     int gathering = PoleGathering(item, (slot->Flags & InventoryItem.ItemFlags.HighQuality) != 0);
-                    for (int j = 0; j < slot->Materia.Length; j++) {
-                        if (slot->Materia[j] == 0 || !DataManager.GetExcelSheet<Materia>().TryGetRow(slot->Materia[j], out var materia)) continue;
+                    for (int j = 0; j < slot->Materia.Length; j++)
+                    {
+                        if (slot->Materia[j] == 0 || !Services.DataManager.GetExcelSheet<Materia>().TryGetRow(slot->Materia[j], out var materia)) continue;
                         int grade = slot->MateriaGrades[j];
                         if (materia.BaseParam.RowId == 72 && grade < materia.Value.Count) gathering += materia.Value[grade];
                     }
@@ -86,13 +106,15 @@ public sealed partial class Plugin
         }
         var player = PlayerState.Instance();
         int level = 0;
-        if (player != null && DataManager.GetExcelSheet<ClassJob>().TryGetRow(18, out var fisher)) {
+        if (player != null && Services.DataManager.GetExcelSheet<ClassJob>().TryGetRow(18, out var fisher))
+        {
             int index = fisher.ExpArrayIndex;
             if (index >= 0 && index < player->ClassJobLevels.Length) level = player->ClassJobLevels[index];
         }
         uint required = RequiredPole(fish);
         var poles = new List<FishingPole>();
-        foreach (var item in poleCatalog) {
+        foreach (var item in poleCatalog)
+        {
             owned.TryGetValue(item.RowId, out var status);
             bool has = owned.ContainsKey(item.RowId);
             poles.Add(new FishingPole(item.RowId, item.Name.ToString(), has ? status.Rank : 2,
@@ -112,9 +134,10 @@ public sealed partial class Plugin
 
     private IReadOnlyList<string> SelectedCatchDetails(uint fish, GuideLocation location, FishingPole? pole)
     {
-        var requirements = BuildRequirementLines(fish);
+        var requirements = formatter.BuildRequirementLines(fish);
         var lines = new List<string> { requirements.FirstOrDefault(l => l.StartsWith("Hook:")) ?? "Hook: Unknown" };
-        if (location.Spearfishing) {
+        if (location.Spearfishing)
+        {
             lines.Add("A spearfishing gig is required.");
             lines.Add("Bait: Not used.");
             return lines;
@@ -123,15 +146,17 @@ public sealed partial class Plugin
         else lines.Add("No eligible fishing pole at your Fisher level.");
         int minimum = MinimumGathering(fish, location.SpotId);
         if (minimum > 0) lines.Add($"Total gathering required: {minimum} (all equipped gear).");
-        if (RequiredPole(fish) != 0) lines.Add($"Required pole: {ItemName(RequiredPole(fish))}");
-        if (data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(location.SpotId, out var entry)) {
-            bool IsFish(uint id) => data.Info.ContainsKey(id) || data.Fish.ContainsKey(id);
+        if (RequiredPole(fish) != 0) lines.Add($"Required pole: {formatter.ItemName(RequiredPole(fish))}");
+        if (fishData.Data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(location.SpotId, out var entry))
+        {
+            bool IsFish(uint id) => fishData.Data.Info.ContainsKey(id) || fishData.Data.Fish.ContainsKey(id);
             var ids = entry.Recommended.Concat(entry.Observed).Distinct().ToArray();
             var mooch = ids.Where(IsFish).ToArray();
-            var bait = ids.Where(id => !IsFish(id)).OrderBy(id => DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>().TryGetRow(id, out var baitItem) ? baitItem.LevelEquip : uint.MaxValue).ThenBy(ItemName).Select(ItemName).ToArray();
+            var bait = ids.Where(id => !IsFish(id)).OrderBy(id => Services.DataManager.GetExcelSheet<Item>().TryGetRow(id, out var baitItem) ? baitItem.LevelEquip : uint.MaxValue).ThenBy(formatter.ItemName).Select(formatter.ItemName).ToArray();
             lines.Add("Bait: " + (bait.Length > 0 ? string.Join(", ", bait) : mooch.Length > 0 ? "None (mooch only)." : "Unknown."));
-            lines.Add("Mooch: " + (mooch.Length > 0 ? string.Join(", ", mooch.Select(ItemName)) : "None."));
-        } else { lines.Add("Bait: Unknown for this location."); lines.Add("Mooch: Unknown."); }
+            lines.Add("Mooch: " + (mooch.Length > 0 ? string.Join(", ", mooch.Select(formatter.ItemName)) : "None."));
+        }
+        else { lines.Add("Bait: Unknown for this location."); lines.Add("Mooch: Unknown."); }
         lines.AddRange(requirements.Where(l => !l.StartsWith("Hook:") && l != "No special requirements." && l != "Fish Eyes: supported"));
         return lines;
     }

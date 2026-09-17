@@ -1,42 +1,27 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Numerics;
-using System.Text.Json;
-using System.Text;
-using System.Threading.Tasks;
-using Dalamud.Bindings.ImGui;
-using Dalamud.Game.Addon.Lifecycle;
-using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
-using Dalamud.Game.ClientState.Keys;
-using Dalamud.Game.Command;
-using Dalamud.Game.Gui.ContextMenu;
-using Dalamud.Game.NativeWrapper;
-using Dalamud.Interface.Windowing;
-using Dalamud.IoC;
-using Dalamud.Hooking;
-using Dalamud.Plugin;
-using Dalamud.Plugin.Services;
-using FFXIVClientStructs.FFXIV.Client.Game.UI;
-using FFXIVClientStructs.FFXIV.Client.UI.Agent;
-using FFXIVClientStructs.FFXIV.Client.UI;
-using FFXIVClientStructs.FFXIV.Component.GUI;
-using KamiToolKit;
-using FishParameterSheet = Lumina.Excel.Sheets.FishParameter;
-using FishingSpotSheet = Lumina.Excel.Sheets.FishingSpot;
-using MainCommandSheet = Lumina.Excel.Sheets.MainCommand;
 using ItemSheet = Lumina.Excel.Sheets.Item;
-using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-public sealed partial class Plugin
+// Turns a fish's raw catch-condition data into the bait/time/weather lines
+// shown in the clue popup, the journal's detail panel, and the guide.
+public sealed class FishDetailsFormatter
 {
-    private FishClueSection BuildFishSection(JournalFish fish)
+    private readonly FishDataService fishData;
+    private readonly Configuration configuration;
+
+    public FishDetailsFormatter(FishDataService fishData, Configuration configuration)
+    {
+        this.fishData = fishData;
+        this.configuration = configuration;
+    }
+
+    public FishClueSection BuildFishSection(JournalFish fish)
     {
         var lines = new List<string>();
-        if (fish.IdentityVisible && (data.Info.GetValueOrDefault(fish.ItemId) ?? fish.Info) is { } info)
+        if (fish.IdentityVisible && (fishData.Data.Info.GetValueOrDefault(fish.ItemId) ?? fish.Info) is { } info)
         {
             if (!string.IsNullOrWhiteSpace(info.Waters)) lines.Add($"Waters: {info.Waters}");
             if (!string.IsNullOrWhiteSpace(info.Region) || !string.IsNullOrWhiteSpace(info.Zone)) lines.Add($"Location: {info.Region} - {info.Zone}");
@@ -49,11 +34,13 @@ public sealed partial class Plugin
         return new FishClueSection(heading, lines);
     }
 
-    private IReadOnlyList<string> BuildRequirementLines(uint itemId, uint spotId = 0)
+    public IReadOnlyList<string> BuildRequirementLines(uint itemId, uint spotId = 0)
     {
+        FishDataFile data = fishData.Data;
         var lines = new List<string>();
         lines.AddRange(BuildBaitLines(itemId, spotId));
-        if (!data.Fish.TryGetValue(itemId, out FishCondition? condition)) {
+        if (!data.Fish.TryGetValue(itemId, out FishCondition? condition))
+        {
             lines.Add("Requirements unknown."); return lines;
         }
         if (!condition.RequirementsKnown) lines.Add("Some requirements are unknown.");
@@ -81,6 +68,7 @@ public sealed partial class Plugin
 
     private IReadOnlyList<string> BuildBaitLines(uint itemId, uint spotId)
     {
+        FishDataFile data = fishData.Data;
         var lines = new List<string>();
         if (data.Locations.Any(l => l.ItemId == itemId && l.Spearfishing) ||
             (data.Fish.TryGetValue(itemId, out var condition) && !string.IsNullOrEmpty(condition.Gig)))
@@ -95,7 +83,8 @@ public sealed partial class Plugin
         var reported = direct.Where(id => !entry.Recommended.Contains(id)).ToArray();
         if (recommended.Length > 0) lines.Add($"Bait: {string.Join(" / ", recommended.Select(ItemName))}");
         if (reported.Length > 0) lines.Add($"Other reported baits: {string.Join(" / ", reported.Select(ItemName))}");
-        if (mooch.Length > 0) {
+        if (mooch.Length > 0)
+        {
             lines.Add($"Mooch from: {string.Join(" / ", mooch.Select(ItemName))}");
             foreach (var id in mooch) AppendMooch(id, spotId, new HashSet<uint> { itemId }, 1, lines);
         }
@@ -107,8 +96,10 @@ public sealed partial class Plugin
 
     private void AppendMooch(uint fish, uint spot, HashSet<uint> visited, int depth, List<string> lines)
     {
+        FishDataFile data = fishData.Data;
         if (depth > 4 || !visited.Add(fish)) return;
-        if (!data.SpotBaits.TryGetValue(fish, out var spots) || !spots.TryGetValue(spot, out var entry)) {
+        if (!data.SpotBaits.TryGetValue(fish, out var spots) || !spots.TryGetValue(spot, out var entry))
+        {
             lines.Add($"To catch {ItemName(fish)} here: requirements unknown."); return;
         }
         var baits = entry.Recommended.Concat(entry.Observed).Distinct().ToArray();
@@ -117,22 +108,26 @@ public sealed partial class Plugin
             AppendMooch(bait, spot, new HashSet<uint>(visited), depth + 1, lines);
     }
 
-    private string ItemName(uint id) => DataManager.GetExcelSheet<ItemSheet>().TryGetRow(id, out var item) ? item.Name.ToString() : data.Items.GetValueOrDefault(id, $"Item #{id}");
-    private string FormatWeather(List<uint> ids, string fallback) => ids.Count == 0 ? fallback : string.Join(" / ", ids.Select(id => data.Weather.GetValueOrDefault(id, $"Weather #{id}")));
-    private string FormatTime(double start, double end)
+    public string ItemName(uint id) => Services.DataManager.GetExcelSheet<ItemSheet>().TryGetRow(id, out var item) ? item.Name.ToString() : fishData.Data.Items.GetValueOrDefault(id, $"Item #{id}");
+
+    public string FormatWeather(List<uint> ids, string fallback) => ids.Count == 0 ? fallback : string.Join(" / ", ids.Select(id => fishData.Data.Weather.GetValueOrDefault(id, $"Weather #{id}")));
+
+    public string FormatTime(double start, double end)
     {
         if (start == 0 && end == 24) return "No special requirement (any time)";
         int startMinutes = (int)Math.Round(start * 60) % 1440;
         int endMinutes = (int)Math.Round(end * 60) % 1440;
         return $"{FormatClock(startMinutes)}-{FormatClock(endMinutes)} ET";
     }
-    private string FormatClock(int minutesOfDay)
+
+    public string FormatClock(int minutesOfDay)
     {
         int hour = minutesOfDay / 60, minute = minutesOfDay % 60;
         if (!configuration.Use12HourTime) return $"{hour:00}:{minute:00}";
         int hour12 = hour % 12 == 0 ? 12 : hour % 12;
         return $"{hour12}:{minute:00} {(hour < 12 ? "AM" : "PM")}";
     }
+
     private static string FormatHook(FishCondition condition)
     {
         string marks = condition.Tug?.ToLowerInvariant() switch { "light" => "!", "medium" => "!!", "heavy" or "legendary" => "!!!", _ => "Unknown bite" };

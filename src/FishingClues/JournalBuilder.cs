@@ -1,37 +1,21 @@
+using Dalamud.Game.NativeWrapper;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Numerics;
-using System.Text.Json;
-using System.Text;
-using System.Threading.Tasks;
-using Dalamud.Bindings.ImGui;
-using Dalamud.Game.Addon.Lifecycle;
-using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
-using Dalamud.Game.ClientState.Keys;
-using Dalamud.Game.Command;
-using Dalamud.Game.Gui.ContextMenu;
-using Dalamud.Game.NativeWrapper;
-using Dalamud.Interface.Windowing;
-using Dalamud.IoC;
-using Dalamud.Hooking;
-using Dalamud.Plugin;
-using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
-using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using KamiToolKit;
 using FishParameterSheet = Lumina.Excel.Sheets.FishParameter;
 using FishingSpotSheet = Lumina.Excel.Sheets.FishingSpot;
-using MainCommandSheet = Lumina.Excel.Sheets.MainCommand;
 using ItemSheet = Lumina.Excel.Sheets.Item;
 using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
 
 namespace FishingClues;
 
-public sealed partial class Plugin
+// Builds the region/area/spot tree the journal and guide windows draw from,
+// and tracks per-character reveal state (both ours and whatever the vanilla
+// Fishing Log has already shown the player).
+public sealed class JournalBuilder
 {
     private static readonly string[] RegionOrder =
     [
@@ -42,78 +26,49 @@ public sealed partial class Plugin
         "Unlost World", "The High Seas", "Other",
     ];
 
-    private static FishDataFile LoadData()
+    private readonly FishDataService fishData;
+    private readonly Configuration configuration;
+    private readonly HashSet<ushort> vanillaRevealedRegions = new();
+    private IReadOnlyList<JournalRegion>? journalCache;
+    private long lastJournalBuild;
+    private ulong journalCharacterId;
+    private long nextFishRevealScan;
+
+    // Fired when the logged-in character changes, so other services can drop
+    // their own per-character transient state (e.g. a pending log-replacement).
+    public event Action? CharacterChanged;
+
+    public JournalBuilder(FishDataService fishData, Configuration configuration)
     {
-        foreach (string path in new[] { DataCachePath, Path.Combine(PluginInterface.AssemblyLocation.DirectoryName!, "FishConditions.json") })
-        {
-            if (!File.Exists(path)) continue;
-            try
-            {
-                var loaded = JsonSerializer.Deserialize<FishDataFile>(File.ReadAllText(path), FishDataRefresh.JsonOptions)!;
-                FishDataRefresh.Validate(loaded);
-                return loaded;
-            }
-            catch (Exception ex) { Log.Warning(ex, "Could not load fishing data; trying bundled fallback."); }
-        }
-        return new FishDataFile();
+        this.fishData = fishData;
+        this.configuration = configuration;
+        fishData.DataRefreshed += () => journalCache = null;
     }
 
-    private async Task RefreshFishDataAsync()
+    public void InvalidateCache()
     {
-        if (dataRefreshBusy || disposed) return;
-        dataRefreshBusy = true;
-        dataRefreshStatus = "Downloading the latest catch conditions and fish information...";
-        nextDataCheck = DateTime.UtcNow.AddDays(1);
-        try
-        {
-            var updated = await Task.Run(() => FishDataRefresh.Download(refreshCancellation.Token));
-            if (disposed) return;
-            if (updated.Fish.Count < data.Fish.Count * 0.9 || updated.Info.Count < data.Info.Count * 0.9)
-                throw new InvalidDataException("The download unexpectedly removed too many fish records.");
-            Directory.CreateDirectory(PluginInterface.GetPluginConfigDirectory());
-            string temp = DataCachePath + ".tmp";
-            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(updated), refreshCancellation.Token);
-            refreshCancellation.Token.ThrowIfCancellationRequested();
-            File.Move(temp, DataCachePath, true);
-            await Framework.Run(() =>
-            {
-                if (disposed) return;
-                data = updated;
-                regionByZone.Clear();
-                foreach (var info in updated.Info.Values)
-                    if (!string.IsNullOrWhiteSpace(info.Zone) && !string.IsNullOrWhiteSpace(info.Region))
-                        regionByZone.TryAdd(info.Zone, info.Region);
-                journalCache = null;
-                dataRefreshStatus = $"Updated {DateTime.Now:g}: {data.Fish.Count:N0} fish. Reopen the journal to refresh all panels.";
-            });
-        }
-        catch (OperationCanceledException) { if (!disposed) dataRefreshStatus = "Refresh cancelled. Previous data kept."; }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Fishing data refresh failed; previous cache retained.");
-            dataRefreshStatus = "Refresh failed. Previous data kept; try again later.";
-        }
-        finally { dataRefreshBusy = false; }
+        journalCache = null;
+        lastJournalBuild = 0;
     }
 
-    private unsafe IReadOnlyList<JournalRegion> GetJournal()
+    public unsafe IReadOnlyList<JournalRegion> GetJournal()
     {
         ResetJournalCharacter();
         if (journalCache is not null && Environment.TickCount64 - lastJournalBuild < 2000)
             return journalCache;
 
+        FishDataFile data = fishData.Data;
         var spots = new List<JournalSpot>();
         PlayerState* player = PlayerState.Instance();
         byte* caught = player == null ? null : player->CaughtFishBitArray.Pointer;
-        var fishSheet = DataManager.GetExcelSheet<FishParameterSheet>();
-        var itemSheet = DataManager.GetExcelSheet<ItemSheet>();
-        var placeNameSheet = DataManager.GetExcelSheet<PlaceNameSheet>();
+        var fishSheet = Services.DataManager.GetExcelSheet<FishParameterSheet>();
+        var itemSheet = Services.DataManager.GetExcelSheet<ItemSheet>();
         var fishByItemId = fishSheet
             .Where(fish => fish.Item.RowId != 0)
             .GroupBy(fish => fish.Item.RowId)
             .ToDictionary(group => group.Key, group => group.First());
 
-        foreach (FishingSpotSheet spot in DataManager.GetExcelSheet<FishingSpotSheet>())
+        foreach (FishingSpotSheet spot in Services.DataManager.GetExcelSheet<FishingSpotSheet>())
         {
             if (spot.PlaceName.RowId == 0 || (spot.TerritoryType.RowId == 0 && spot.RowId != 10000 && spot.RowId < 10017))
                 continue;
@@ -147,8 +102,8 @@ public sealed partial class Plugin
             if (string.IsNullOrWhiteSpace(region) || region.Equals("Other", StringComparison.OrdinalIgnoreCase))
             {
                 string? mappedRegion = null;
-                if (!regionByZone.TryGetValue(area, out mappedRegion))
-                    regionByZone.TryGetValue(territory, out mappedRegion);
+                if (!fishData.RegionByZone.TryGetValue(area, out mappedRegion))
+                    fishData.RegionByZone.TryGetValue(territory, out mappedRegion);
                 region = mappedRegion ?? RegionFromKnownArea(area);
             }
             string spotName = spot.PlaceName.ValueNullable?.Name.ToString() ?? $"Fishing Hole #{spot.RowId}";
@@ -181,27 +136,25 @@ public sealed partial class Plugin
         PlayerState* player = PlayerState.Instance();
         ulong character = player == null ? 0 : player->ContentId;
         if (journalCharacterId == character) return;
-        normalLogReturnPending = false;
-        normalLogWasVisible = false;
-        normalLogCloseRequested = false;
         journalCharacterId = character;
         vanillaRevealedRegions.Clear();
         journalCache = null;
+        CharacterChanged?.Invoke();
     }
 
-    private unsafe void ObserveVanillaRegionLabels()
+    public unsafe void ObserveVanillaRegionLabels()
     {
         ResetJournalCharacter();
-        AtkUnitBasePtr ptr = GameGui.GetAddonByName("FishingNote");
+        AtkUnitBasePtr ptr = Services.GameGui.GetAddonByName("FishingNote");
         AgentFishingNote* agent = AgentFishingNote.Instance();
         if (ptr.IsNull || !ptr.IsVisible || agent == null || agent->Mode != 0) return;
         ObserveRevealedFish(agent, (AtkUnitBase*)ptr.Address);
-        var places = DataManager.GetExcelSheet<PlaceNameSheet>();
+        var places = Services.DataManager.GetExcelSheet<PlaceNameSheet>();
         foreach (ushort id in new ushort[] { 3704, 3705, 4502 })
         {
             if (vanillaRevealedRegions.Contains(id) || !places.TryGetRow(id, out var place)) continue;
             string name = place.Name.ToString();
-            if (name.Length > 0 && IsNameVisibleInFishingLog((AtkUnitBase*)ptr.Address, name))
+            if (name.Length > 0 && FishingNoteAddon.IsNameVisible((AtkUnitBase*)ptr.Address, name))
             {
                 vanillaRevealedRegions.Add(id);
                 journalCache = null;
@@ -213,20 +166,23 @@ public sealed partial class Plugin
     {
         if (journalCharacterId == 0 || Environment.TickCount64 < nextFishRevealScan) return;
         nextFishRevealScan = Environment.TickCount64 + 500;
-        var fishSheet = DataManager.GetExcelSheet<FishParameterSheet>();
+        var fishSheet = Services.DataManager.GetExcelSheet<FishParameterSheet>();
         if (!configuration.RevealedFish.TryGetValue(journalCharacterId, out var revealed))
             configuration.RevealedFish[journalCharacterId] = revealed = new HashSet<uint>();
         bool changed = false;
         int count = Math.Min(agent->FishSlotCount, (byte)agent->FishSlots.Length);
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < count; i++)
+        {
             uint id = agent->FishSlots[i].Id;
             if (id == 0 || revealed.Contains(id) || !fishSheet.TryGetRow(id, out var fish)) continue;
-            string name = ItemName(fish.Item.RowId);
-            if (IsNameVisibleInFishingLog(addon, name)) changed |= revealed.Add(id);
+            var itemSheet = Services.DataManager.GetExcelSheet<ItemSheet>();
+            string name = itemSheet.TryGetRow(fish.Item.RowId, out var item) ? item.Name.ToString() : fishData.Data.Items.GetValueOrDefault(fish.Item.RowId, $"Item #{fish.Item.RowId}");
+            if (FishingNoteAddon.IsNameVisible(addon, name)) changed |= revealed.Add(id);
         }
-        if (changed) {
+        if (changed)
+        {
             journalCache = null;
-            PluginInterface.SavePluginConfig(configuration);
+            Services.PluginInterface.SavePluginConfig(configuration);
         }
     }
 
@@ -236,7 +192,7 @@ public sealed partial class Plugin
         return index < 0 ? RegionOrder.Length - 1 : index;
     }
 
-    private static unsafe bool IsFishingHoleDiscovered(PlayerState* player, uint rowId)
+    internal static unsafe bool IsFishingHoleDiscovered(PlayerState* player, uint rowId)
     {
         if (player == null) return false;
         var flags = player->UnlockedFishingSpotsBitArray;
@@ -255,6 +211,6 @@ public sealed partial class Plugin
         return "Other";
     }
 
-    private unsafe static bool IsCaught(byte* caught, uint fishId)
+    private static unsafe bool IsCaught(byte* caught, uint fishId)
         => caught != null && ((caught[fishId / 8] >> (byte)(fishId % 8)) & 1) != 0;
 }

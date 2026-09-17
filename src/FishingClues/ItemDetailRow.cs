@@ -41,7 +41,7 @@ public sealed class ItemDetailRow : ResNode
                 node.AddEvent(AtkEventType.MouseOut, () => node.TextColor = normal);
                 uint itemId = match.Value;
                 node.AddEvent(AtkEventType.MouseDown, () => {
-                    if (NativeMouseInput.IsRightButtonHeld()) Plugin.RequestItemMenu(itemId);
+                    if (NativeMouseInput.IsRightButtonHeld()) ItemContextMenuService.RequestItemMenu(itemId);
                 });
             }
             node.AttachNode(this);
