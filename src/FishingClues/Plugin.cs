@@ -113,6 +113,14 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             configuration.NativeAreaDropdownRightInset = 0.0f;
             configuration.Version = 17;
         }
+        if (configuration.Version < 18)
+        {
+            // the left inset that just became the confirmed-clickable setup (slider
+            // value 1 against the old baseline) is now the baseline itself, so the
+            // slider reads 0 there instead of 1.
+            configuration.NativeAreaDropdownLeftInset = 0.0f;
+            configuration.Version = 18;
+        }
     }
 
     public void Dispose()

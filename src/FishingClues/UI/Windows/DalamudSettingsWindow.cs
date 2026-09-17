@@ -15,7 +15,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
 {
     private const float DefaultRegionWidth = 181.0f;
     private const float DefaultAreaWidth = 286.0f;
-    private const float DefaultAreaDropdownLeftInset = 1.0f;
+    private const float DefaultAreaDropdownLeftInset = 0.0f;
     private const float DefaultAreaDropdownRightInset = 0.0f;
 
     private bool capturingKeybind;
