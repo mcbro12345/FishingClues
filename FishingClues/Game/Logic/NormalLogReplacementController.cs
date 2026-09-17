@@ -179,6 +179,16 @@ public sealed class NormalLogReplacementController
         {
             replacementRequested = false;
             lastReplacement = now;
+            // Safe here: this runs on the plugin's own Framework.Update tick, not
+            // inside the game's addon lifecycle callback that flagged the request.
+            if (agentActive)
+                ((AgentInterface*)agent)->Hide();
+            if (addonVisible)
+            {
+                var addon = (AtkUnitBase*)ptr.Address;
+                if (addon != null && addon->IsReady)
+                    addon->Close(true);
+            }
             windowManager.ToggleNativeJournal();
             return;
         }
@@ -198,20 +208,23 @@ public sealed class NormalLogReplacementController
         windowManager.ToggleNativeJournal();
     }
 
-    private unsafe void OnFishingNoteIntercept(AddonEvent eventType, AddonArgs args)
+    private void OnFishingNoteIntercept(AddonEvent eventType, AddonArgs args)
     {
         if (normalLogReturnPending) return;
         if (!configuration.ReplaceNormalFishingLog || allowExplicitVanillaLog)
             return;
-        AtkUnitBase* addon = (AtkUnitBase*)args.Addon.Address;
-        if (addon == null)
-            return;
 
+        // Only flag the intercept here - PostSetup/PreDraw fire from inside the
+        // game's own addon lifecycle, while it's still mid-setup/mid-draw. Forcing
+        // Hide()/Close() on the addon (and Hide() on its agent) re-entrantly from
+        // inside that same callback is what corrupts AgentFishingNote's native
+        // region/spot data: the vanilla log then shows an empty Region and Area
+        // list on every future open - including a completely explicit one - until
+        // the game itself is restarted (disabling the plugin alone doesn't help,
+        // since that native data lives in the game process, not the plugin).
+        // Do the actual hide/close on the next framework tick instead, same as
+        // OnNormalLogClosed already does for the opposite direction below.
         replacementRequested = true;
-        AgentFishingNote* agent = AgentFishingNote.Instance();
-        if (agent != null && ((AgentInterface*)agent)->IsAgentActive())
-            ((AgentInterface*)agent)->Hide();
-        addon->Close(true);
     }
 
     private void OnNormalLogClosed(AddonEvent eventType, AddonArgs args)
