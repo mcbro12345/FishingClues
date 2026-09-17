@@ -139,8 +139,9 @@ public sealed class FishEntryRowNode : ListButtonNode
         const float lineGap = 0.0f;
         float stackHeight = nameHeight + lineGap + textHeight;
         float contentHeight = Math.Max(IconSize, stackHeight);
-        // keep wrapped rows the same height as compact ones, just centered
-        float desiredHeight = CompactHeight;
+        // wrapped rows match the compact height when they fit; if even the smallest
+        // badge font still needs a second line, grow instead of clipping it
+        float desiredHeight = Math.Max(CompactHeight, contentHeight);
         float margin = Math.Max(0.0f, (desiredHeight - contentHeight) / 2.0f);
 
         float wrappedIconY = margin + (contentHeight - IconSize) / 2.0f;
@@ -156,16 +157,21 @@ public sealed class FishEntryRowNode : ListButtonNode
     }
 
     // Shrinks the availability badge's font until its text fits on one line within
-    // the given width, instead of wrapping onto a second line the row can't show in full.
+    // the given width. If it still doesn't fit at the smallest readable size, wraps
+    // it onto more lines instead - the row itself grows to show all of it rather
+    // than cutting it off.
     private void ShrinkBadgeToFit(float availableWidth)
     {
         if (availabilityBadge is null) return;
         uint fontSize = MaxBadgeFontSize;
         availabilityBadge.FontSize = fontSize;
+        availabilityBadge.TextFlags = TextFlags.Ellipsis;
         while (fontSize > MinBadgeFontSize && availabilityBadge.GetTextDrawSize(false).X > availableWidth)
         {
             fontSize--;
             availabilityBadge.FontSize = fontSize;
         }
+        if (availabilityBadge.GetTextDrawSize(false).X > availableWidth)
+            availabilityBadge.TextFlags = TextFlags.WordWrap | TextFlags.MultiLine;
     }
 }
