@@ -50,6 +50,12 @@ public class CollapsingHeaderNode : LayoutListNode {
     public Action<bool>? OnToggle { get; set; }
 
     /// <summary>
+    /// Gets the text node used to display this header's label, for callers that need to
+    /// restyle it (font, color, and so on) beyond what <see cref="String"/> allows.
+    /// </summary>
+    public TextNode LabelTextNode => ToggleableHeaderNode.LabelTextNode;
+
+    /// <summary>
     /// Constructs a new <see cref="CollapsingHeaderNode"/>
     /// </summary>
     public CollapsingHeaderNode() {

@@ -12,6 +12,7 @@ using KamiToolKit.BaseTypes;
 using KamiToolKit.Nodes;
 
 using FishingClues.Base;
+using FishingClues.Game.Data;
 using FishingClues.Game.Models;
 using FishingClues.Game.Logic;
 using FishingClues.UI.Components;
@@ -24,9 +25,12 @@ public sealed class NativeJournalSessionState
     public uint SelectedSpot { get; set; }
     public uint SelectedFish { get; set; }
     public float RegionScroll, AreaScroll, FishScroll, DetailsScroll;
-    public HashSet<string> ExpandedAreas { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, RegionViewState> Regions { get; } = new(StringComparer.OrdinalIgnoreCase);
     public string SearchText { get; set; } = "";
+    // True once the journal has been opened at least once this session -
+    // only the very first open auto-navigates to the player's current
+    // location; every open after that is purely the persisted view above.
+    public bool HasOpenedOnce { get; set; }
 }
 
 public sealed record RegionViewState(uint Spot, uint Fish, float AreaScroll, float FishScroll, float DetailsScroll);
@@ -47,11 +51,19 @@ public sealed partial class NativeJournalWindow(
     IAddonEventManager addonEvents,
     Action? openGuide = null,
     IReadOnlyList<JournalFish>? guideFish = null, Func<JournalFish, GuideDetails>? guideDetails = null,
-    Func<JournalFish, FishAvailabilityInfo?>? getAvailability = null) : NativeAddon
+    Func<JournalFish, FishAvailabilityInfo?>? getAvailability = null,
+    // A fishing hole that was just discovered since the journal was last
+    // opened (see JournalBuilder.ConsumePendingDiscoveredSpot) - takes this
+    // window straight to it on open, ahead of both the persisted view and
+    // the first-open-of-session location auto-navigate. Only ever set for
+    // the real journal window, never the fish guide.
+    uint? pendingDiscoveredSpotId = null) : NativeAddon
 {
     private const float HeaderHeight = 28.0f;
     private const float FishSummaryHeight = 61.0f;
     private const float ColumnGap = 10.0f;
+    // The warm gold requested for the region list's text.
+    private static readonly Vector4 RegionListTextColor = new(0.80f, 0.66f, 0.40f, 1.0f);
     private ScrollingNode<JournalListNode>? regionList;
     private ScrollingNode<JournalListNode>? areaList;
     private ScrollingNode<JournalListNode>? fishList;
@@ -72,6 +84,11 @@ public sealed partial class NativeJournalWindow(
     private long nextAvailabilityRefresh;
     private readonly Dictionary<ListButtonNode, JournalRegion> regionButtons = new();
     private readonly Dictionary<ListButtonNode, uint> spotButtons = new();
+    // Populated fresh by SelectRegion each time it (re)builds the area list -
+    // lets SelectSpot/NavigateToSpot open the right area's dropdown live when
+    // jumping to a hole in a different area than the one currently open,
+    // without needing a full SelectRegion rebuild.
+    private readonly Dictionary<JournalArea, AnimatedAreaHeaderNode> areaHeaderByArea = new();
     private LabelTextNode? detailsHint;
     private CategoryTextNode? regionHeader;
     private CategoryTextNode? areaHeader;
@@ -161,6 +178,13 @@ public sealed partial class NativeJournalWindow(
                 String = region.IsUnlocked ? region.Name : "???",
                 OnClick = () => SelectRegion(captured),
             };
+            // Warm gold, matching the color requested. FontType.Miedinger was
+            // tried here for a "header" look, but it turned out to be a
+            // numeric/header-only glyph set in this game - it has no lowercase
+            // letters, so real place names rendered as dashes for every
+            // unsupported character. Left on the normal Axis font (the
+            // ListButtonNode default) so names actually display.
+            regionButton.LabelNode.TextColor = RegionListTextColor;
             regionButtons.Add(regionButton, captured);
             regionList.ContentNode.AddNode(regionButton);
         }
@@ -175,8 +199,44 @@ public sealed partial class NativeJournalWindow(
 
         if (!GuideMode && regions.Count > 0)
         {
-            JournalRegion initialRegion = regions.FirstOrDefault(region => region.Name == sessionState.SelectedRegion) ?? regions[0];
-            SelectRegion(initialRegion, true);
+            JournalRegion? forceRegion = null;
+            JournalArea? forceArea = null;
+            JournalSpot? forceSpot = null;
+
+            // A hole discovered since the log was last opened wins over
+            // everything else - open straight to it.
+            if (pendingDiscoveredSpotId is uint discoveredId)
+            {
+                foreach (JournalRegion candidateRegion in regions)
+                {
+                    JournalArea? candidateArea = candidateRegion.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == discoveredId && s.IsUnlocked));
+                    if (candidateArea is null) continue;
+                    forceRegion = candidateRegion;
+                    forceArea = candidateArea;
+                    forceSpot = candidateArea.Spots.First(s => s.Id == discoveredId);
+                    break;
+                }
+            }
+
+            if (!sessionState.HasOpenedOnce)
+            {
+                sessionState.HasOpenedOnce = true;
+                if (forceRegion is null)
+                {
+                    var (currentRegion, currentArea, currentSpot) = JournalBuilder.LocateCurrentLocation(regions);
+                    if (currentRegion is not null)
+                    {
+                        forceRegion = currentRegion;
+                        forceArea = currentArea;
+                        forceSpot = currentSpot;
+                    }
+                }
+            }
+
+            JournalRegion initialRegion = forceRegion
+                ?? regions.FirstOrDefault(region => region.Name == sessionState.SelectedRegion)
+                ?? regions[0];
+            SelectRegion(initialRegion, true, forceArea, forceSpot);
         }
         if (!GuideMode) InitializeJournalButton();
         else

@@ -37,7 +37,16 @@ public sealed record JournalSpot(
     Vector2? MapPixelPosition = null,
     // Game path of the area's map texture (e.g. "ui/map/s1d1/00/s1d100_m.tex"),
     // shared by every spot in the same territory. Null alongside MapPixelPosition.
-    string? MapTexturePath = null)
+    string? MapTexturePath = null,
+    // Raw world X/Z (not map-pixel space) - used only to find which fishing
+    // hole the player is nearest to within their current territory, for the
+    // "open to where I'm standing" auto-navigate on the journal's first open.
+    Vector2? WorldPosition = null,
+    // The spot's own FishingSpot.Radius field - used only to size its range
+    // circle on the area map relative to other holes in the same zone (see
+    // NativeJournalWindow.Map.cs's MarkerCircleRawDiameter), not for
+    // anything gameplay-related. 0 for a spot with no usable radius data.
+    int Radius = 0)
 {
     public int CaughtCount => Fish.Count(f => f.IsCaught);
     public int MissingCount => Fish.Count - CaughtCount;

@@ -73,6 +73,13 @@ public sealed class WindowManager
 
     public void ShowDiagnostics(string report) => diagnosticWindow.Show(report);
 
+    // Lets Plugin.LogJournalDiagnostics fold the currently-open journal's
+    // live area-map state into the same report, rather than needing a
+    // separate /xllog capture for map bugs.
+    public string DescribeMapState() => nativeJournal?.IsOpen == true
+        ? nativeJournal.DescribeMapState()
+        : "Area map: journal window is not currently open.";
+
     public void OpenSettings() => dalamudSettings.IsOpen = true;
 
     public void SaveConfiguration()
@@ -153,6 +160,7 @@ public sealed class WindowManager
             await Services.Framework.Run(() =>
             {
                 nativeJournal?.Dispose();
+                uint? pendingDiscovery = journal.ConsumePendingDiscoveredSpot();
                 nativeJournal = new NativeJournalWindow(regions, nativeJournalState,
                     configuration.NativeRegionWidth, configuration.NativeAreaWidth,
                     configuration.NativeAreaDropdownLeftInset, configuration.NativeAreaDropdownRightInset,
@@ -160,7 +168,8 @@ public sealed class WindowManager
                     OpenNormalFishingLog, configuration, formatter.BuildFishSection,
                     ex => Services.Log.Error(ex, "Native journal button failed; using the text fallback."),
                     () => Services.PluginInterface.SavePluginConfig(configuration), Services.AddonEvents,
-                    () => _ = OpenGuideAsync(), guideDetails: guideDetails.BuildGuideDetails, getAvailability: availability.GetAvailability)
+                    () => _ = OpenGuideAsync(), guideDetails: guideDetails.BuildGuideDetails, getAvailability: availability.GetAvailability,
+                    pendingDiscoveredSpotId: pendingDiscovery)
                 {
                     InternalName = "FishingCluesJournalNative",
                     Title = "Fishing Log",

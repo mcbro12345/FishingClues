@@ -185,8 +185,9 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         report.AppendLine($"Fishing Clues {typeof(Plugin).Assembly.GetName().Version}");
         report.AppendLine($"Client structs: {typeof(PlayerState).Assembly.GetName().Version}");
         report.AppendLine($"Normal-log return: {normalLog.ReturnStatus}");
-        report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}; areaDropdownLeftInset={configuration.NativeAreaDropdownLeftInset:0.#}; areaDropdownRightInset={configuration.NativeAreaDropdownRightInset:0.#}");
+        report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}");
         report.AppendLine($"Replacement={configuration.ReplaceNormalFishingLog}; loggedIn={Services.ClientState.IsLoggedIn}; explicit={normalLog.AllowExplicitVanillaLog}; seenVisible={normalLog.WasNormalLogVisible}; closeQueued={normalLog.IsCloseQueued}; customOpen={windowManager.IsNativeJournalOpen}");
+        report.AppendLine(windowManager.DescribeMapState().TrimEnd());
         try
         {
             PlayerState* player = PlayerState.Instance();

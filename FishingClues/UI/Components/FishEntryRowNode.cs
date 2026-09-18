@@ -11,7 +11,6 @@ namespace FishingClues.UI.Components;
 public sealed class FishEntryRowNode : ListButtonNode
 {
     private const float CompactHeight = 44.0f;
-    private const int WrappedBadgeTextLengthThreshold = 16;
     private const uint BadgeFontSize = 12;
 
     private const float IconSize = 38.0f;
@@ -20,7 +19,7 @@ public sealed class FishEntryRowNode : ListButtonNode
     private readonly LabelTextNode unknownIcon;
     private LabelTextNode? favoriteButton;
     private LabelTextNode? availabilityBadge;
-    private bool availabilityWrapped;
+    private string availabilityRawText = "";
     private bool favoriteHovered;
 
     public FishEntryRowNode(JournalFish fish, string label, Action onClick)
@@ -81,19 +80,15 @@ public sealed class FishEntryRowNode : ListButtonNode
 
     public void SetAvailability(bool available, string text, string tooltip)
     {
-        bool wrapped = text.Length > WrappedBadgeTextLengthThreshold;
         if (availabilityBadge is null)
         {
             // default LineSpacing (24) is tuned for 14pt text, too tall for our small badge
             availabilityBadge = new LabelTextNode { FontSize = BadgeFontSize, LineSpacing = 14 };
             availabilityBadge.AttachNode(this, NodePosition.AfterAllSiblings);
         }
-        availabilityWrapped = wrapped;
-        availabilityBadge.AlignmentType = wrapped ? AlignmentType.Left : AlignmentType.Right;
-        availabilityBadge.TextFlags = wrapped ? TextFlags.WordWrap | TextFlags.MultiLine : TextFlags.Ellipsis;
+        availabilityRawText = text;
         availabilityBadge.TextColor = available ? new Vector4(0.45f, 0.95f, 0.45f, 1f) : new Vector4(0.95f, 0.4f, 0.4f, 1f);
         availabilityBadge.TextTooltip = tooltip;
-        availabilityBadge.String = text;
 
         OnSizeChanged();
     }
@@ -101,61 +96,57 @@ public sealed class FishEntryRowNode : ListButtonNode
     protected override void OnSizeChanged()
     {
         base.OnSizeChanged();
-        bool wrapped = availabilityBadge is not null && availabilityWrapped;
+
+        float favoriteReserve = favoriteButton is null ? 8.0f : 38.0f;
         float rightReserve = favoriteButton is null ? 56 : 90;
-        if (availabilityBadge is not null && !wrapped) rightReserve += 82;
 
-        if (!wrapped)
+        // The availability badge always sits on its own line under the fish
+        // name, never squeezed onto the name's own line to one side of it -
+        // an earlier version tried to fit short badge text inline next to
+        // the name when there was room, but that made the badge jump
+        // between two different spots depending on how long the current
+        // text happened to be (for example, switching Settings' 12-hour
+        // time format changes the badge string's length, which could flip
+        // it between the inline and stacked spot even though nothing about
+        // the row itself changed) - always stacking it below the name is
+        // consistent regardless of the text or which time format is active.
+        if (availabilityBadge is not null)
         {
-            float iconY = (CompactHeight - IconSize) / 2.0f;
-            float labelY = (CompactHeight - 28.0f) / 2.0f;
-            if (fishIcon is not null) fishIcon.Position = new Vector2(4.0f, iconY);
-            if (unknownIcon is not null) unknownIcon.Position = new Vector2(4.0f, iconY);
-            LabelNode.Position = new Vector2(50.0f, labelY);
-            LabelNode.Size = new Vector2(Math.Max(20.0f, Width - rightReserve), 28.0f);
-            if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(50, Width - 30), labelY);
-
-            if (availabilityBadge is not null)
+            float wrappedWidth = Math.Max(80.0f, Width - 58.0f);
+            availabilityBadge.AlignmentType = AlignmentType.Left;
+            availabilityBadge.TextFlags = TextFlags.WordWrap | TextFlags.MultiLine;
+            if (Math.Abs(availabilityBadge.Width - wrappedWidth) > 0.5f || availabilityBadge.String != availabilityRawText)
             {
-                availabilityBadge.Size = new Vector2(78.0f, 20.0f);
-                float badgeRight = Width - (favoriteButton is null ? 8.0f : 38.0f);
-                availabilityBadge.Position = new Vector2(Math.Max(48.0f, badgeRight - 78.0f), 12.0f);
+                availabilityBadge.Width = wrappedWidth;
+                // the native text node only re-wraps its text when the text itself is
+                // re-set, not when Width changes on its own - without this, the badge
+                // keeps whatever line breaks it had at its old width and can render as
+                // a single clipped line even though its box is now the right size.
+                availabilityBadge.String = availabilityRawText;
             }
-            if (Math.Abs(Height - CompactHeight) > 0.5f) Height = CompactHeight;
-            return;
         }
 
-        float wrappedWidth = Math.Max(80.0f, Width - 58.0f);
-        if (Math.Abs(availabilityBadge!.Width - wrappedWidth) > 0.5f)
-        {
-            availabilityBadge.Width = wrappedWidth;
-            // the native text node only re-wraps its text when the text itself is
-            // re-set, not when Width changes on its own - without this, the badge
-            // keeps whatever line breaks it had at its old width and can render as
-            // a single clipped line even though its box is now the right size.
-            availabilityBadge.String = availabilityBadge.String;
-        }
-        float textHeight = Math.Max(14.0f, availabilityBadge.GetTextDrawSize(false).Y);
-        availabilityBadge.Height = textHeight;
+        float textHeight = availabilityBadge is null ? 0.0f : Math.Max(14.0f, availabilityBadge.GetTextDrawSize(false).Y);
+        if (availabilityBadge is not null) availabilityBadge.Height = textHeight;
         // the 28px name box is taller than the glyphs actually drawn in it
         float nameHeight = Math.Max(14.0f, LabelNode.GetTextDrawSize(false).Y);
 
         const float lineGap = 0.0f;
-        float stackHeight = nameHeight + lineGap + textHeight;
+        float stackHeight = availabilityBadge is null ? nameHeight : nameHeight + lineGap + textHeight;
         float contentHeight = Math.Max(IconSize, stackHeight);
-        // wrapped rows match the compact height when they fit; if the availability
+        // rows match the compact height when everything fits; if the availability
         // text needs a second (or third) line, grow the row instead of clipping it
         float desiredHeight = Math.Max(CompactHeight, contentHeight);
         float margin = Math.Max(0.0f, (desiredHeight - contentHeight) / 2.0f);
 
-        float wrappedIconY = margin + (contentHeight - IconSize) / 2.0f;
+        float iconY = margin + (contentHeight - IconSize) / 2.0f;
         float nameY = margin + (contentHeight - stackHeight) / 2.0f;
-        if (fishIcon is not null) fishIcon.Position = new Vector2(4.0f, wrappedIconY);
-        if (unknownIcon is not null) unknownIcon.Position = new Vector2(4.0f, wrappedIconY);
+        if (fishIcon is not null) fishIcon.Position = new Vector2(4.0f, iconY);
+        if (unknownIcon is not null) unknownIcon.Position = new Vector2(4.0f, iconY);
         LabelNode.Position = new Vector2(50.0f, nameY);
         LabelNode.Size = new Vector2(Math.Max(20.0f, Width - rightReserve), nameHeight);
         if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(50, Width - 30), nameY);
-        availabilityBadge.Position = new Vector2(50.0f, nameY + nameHeight + lineGap);
+        if (availabilityBadge is not null) availabilityBadge.Position = new Vector2(50.0f, nameY + nameHeight + lineGap);
 
         if (Math.Abs(Height - desiredHeight) > 0.5f) Height = desiredHeight;
     }

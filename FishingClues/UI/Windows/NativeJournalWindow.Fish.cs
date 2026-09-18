@@ -7,6 +7,7 @@ using Dalamud.Game.Addon.Events;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.System.Input;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using KamiToolKit.BaseTypes;
 using KamiToolKit.Nodes;
@@ -18,6 +19,12 @@ namespace FishingClues.UI.Windows;
 
 public sealed partial class NativeJournalWindow
 {
+    // The generic UI click sound (see FishEntryRowNode.AddFavoriteStar's own
+    // use of the same id) - used here for area headers opening, which
+    // otherwise happen completely silently (see this file's own OnToggle
+    // wiring for why).
+    private const uint UiClickSoundEffectId = 1;
+
     public void SubmitSearch(string query, uint itemId = 0)
     {
         requestedSearchItem = itemId;
@@ -68,11 +75,18 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    private void SelectRegion(JournalRegion region, bool restoring = false)
+    // forceOpenArea/forceSelectSpot let a caller override the normal
+    // persisted-view lookup below - used for the very first open of a
+    // session (auto-navigate to the player's current location) and for a
+    // hole that was just discovered since the log was last opened.
+    private void SelectRegion(JournalRegion region, bool restoring = false, JournalArea? forceOpenArea = null, JournalSpot? forceSelectSpot = null)
     {
         if (!restoring && selectedRegion is not null) SaveViewState();
         sessionState.Regions.TryGetValue(region.Name, out var remembered);
-        if (remembered is not null) {
+        if (forceSelectSpot is not null) {
+            sessionState.SelectedSpot = forceSelectSpot.Id;
+            sessionState.SelectedFish = 0;
+        } else if (remembered is not null) {
             sessionState.SelectedSpot = remembered.Spot;
             sessionState.SelectedFish = remembered.Fish;
         } else if (!restoring) {
@@ -89,13 +103,22 @@ public sealed partial class NativeJournalWindow
         if (areaList is null || fishList is null)
             return;
 
+        // Exactly one area is ever open at a time: whichever holds the hole
+        // we're about to select (forced, remembered, or newly picked up
+        // below), falling back to the first area for a region with nothing
+        // else to go on yet (a region visited for the first time this
+        // session, or with no persisted spot in it).
+        JournalArea? openArea = forceOpenArea
+            ?? region.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == sessionState.SelectedSpot))
+            ?? region.Areas.FirstOrDefault();
+
         spotButtons.Clear();
         areaList.ContentNode.Clear();
-        var areaHeaders = new List<CollapsingHeaderNode>();
-        for (int areaIndex = 0; areaIndex < region.Areas.Count; areaIndex++)
+        areaHeaderByArea.Clear();
+        var areaHeaders = new List<AnimatedAreaHeaderNode>();
+        foreach (JournalArea area in region.Areas)
         {
-            JournalArea area = region.Areas[areaIndex];
-            string areaKey = $"{region.Name}\n{area.Name}";
+            JournalArea capturedArea = area;
             var areaDropDown = new AnimatedAreaHeaderNode
             {
                 String = region.IsUnlocked ? area.Name : "???",
@@ -103,29 +126,50 @@ public sealed partial class NativeJournalWindow
                 FitWidth = true,
                 ItemSpacing = 2.0f,
                 FirstItemSpacing = 1.0f,
-                IsCollapsed = !sessionState.ExpandedAreas.Contains(areaKey) && !area.Spots.Any(s => s.Id == sessionState.SelectedSpot),
+                IsCollapsed = !ReferenceEquals(area, openArea),
             };
+            // FontType.Miedinger was tried here for a "header" look to match
+            // the region list, but it's a numeric/header-only glyph set in
+            // this game with no lowercase letters - real area names rendered
+            // as dashes for every unsupported character. Left on the normal
+            // Axis font (the header's default) so names actually display.
             areaDropDown.OnToggle = expanded =>
             {
-                if (!expanded && selectedSpot is not null && area.Spots.Any(s => s.Id == selectedSpot.Id)) {
+                if (!expanded)
+                {
+                    if (areaDropDown.AllowProgrammaticCollapse) { areaDropDown.AllowProgrammaticCollapse = false; return; }
+                    // Exactly one area must always stay open - deny the user
+                    // collapsing whichever one that currently is.
                     areaDropDown.RestoreExpandedOnNextTick = true;
                     return;
                 }
-                if (expanded)
+                // Opening this one closes every other area in this region -
+                // only ever one dropdown open at a time. Each other header's
+                // own OnToggle(false) fires from this, and lets it through
+                // because AllowProgrammaticCollapse is set first.
+                foreach (var otherHeader in areaHeaders)
                 {
-                    sessionState.ExpandedAreas.Add(areaKey);
-                    ShowAreaMap(area);
+                    if (ReferenceEquals(otherHeader, areaDropDown) || otherHeader.IsCollapsed) continue;
+                    otherHeader.AllowProgrammaticCollapse = true;
+                    otherHeader.IsCollapsed = true;
                 }
-                else
-                {
-                    sessionState.ExpandedAreas.Remove(areaKey);
-                }
-                foreach (var header in areaHeaders.OfType<AnimatedAreaHeaderNode>()) header.RecalculateLayout();
+                foreach (var header in areaHeaders) header.RecalculateLayout();
                 areaList?.RecalculateSizes();
                 // Toggling can add/remove the scrollbar, which changes the column width.
                 ApplyAreaDropdownWidths();
+                // Area headers otherwise open completely silently (see
+                // ToggleableHeaderNode - unlike a real button component, it
+                // never plays a sound on its own) - this is the same generic
+                // click sound FishEntryRowNode's favorite star uses. Fires
+                // for every way an area gets opened (a direct title click,
+                // and the partial-click-forward override in
+                // NativeJournalWindow.Draw.cs, which sets IsCollapsed the
+                // same way), but not the collapse side, matching what was
+                // asked for.
+                unsafe { UIGlobals.PlaySoundEffect(UiClickSoundEffectId); }
             };
             areaHeaders.Add(areaDropDown);
+            areaHeaderByArea[capturedArea] = areaDropDown;
             foreach (JournalSpot spot in area.Spots)
             {
                 JournalSpot captured = spot;
@@ -165,10 +209,16 @@ public sealed partial class NativeJournalWindow
             var restoredRow = fishButtons.FirstOrDefault(p => p.Value == sessionState.SelectedFish).Key;
             restoredRow?.OnClick?.Invoke();
         }
-        JournalArea? mapDefaultArea = restoredSpot is not null
-            ? region.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == restoredSpot.Id))
-            : region.Areas.FirstOrDefault();
-        if (mapDefaultArea is not null) ShowAreaMap(mapDefaultArea);
+        // No fallback ShowAreaMap call here when there's no remembered hole
+        // to restore - the map (and its area name/caption) stays exactly as
+        // it was until a fishing hole is actually clicked, so switching
+        // regions/areas alone never changes what's shown or refreshes it
+        // for an area that has nothing discovered yet. Once a hole HAS ever
+        // been picked this window (mapArea is no longer null) that's the
+        // only thing that governs the map from here on; before that, the
+        // generic preview backdrop follows along to whatever area this
+        // region just opened to instead of sitting on the previous region's.
+        if (mapArea is null) RefreshMapPreview(openArea);
         if (remembered is not null) {
             RestoreScroll(areaList, remembered.AreaScroll);
             RestoreScroll(fishList, remembered.FishScroll);
@@ -202,7 +252,15 @@ public sealed partial class NativeJournalWindow
         foreach (var pair in spotButtons) pair.Key.Selected = pair.Value == spot.Id;
         sessionState.SelectedRegion = selectedRegion?.Name;
         sessionState.SelectedSpot = spot.Id;
-        if (selectedRegion is not null) sessionState.ExpandedAreas.Add($"{selectedRegion.Name}\n{spot.Area}");
+        // Selecting a hole in a different area than the one currently open
+        // (e.g. via a map marker click) switches which area dropdown is
+        // open - the accordion invariant (only one open) is self-enforcing
+        // once opened, since opening one collapses the rest (see SelectRegion).
+        OpenAreaContaining(spot);
+        // Clicking a fishing hole is the one action that's allowed to change
+        // the map - it always jumps to and centers on the hole just clicked.
+        JournalArea? spotArea = selectedRegion?.Areas.FirstOrDefault(a => a.Name == spot.Area);
+        if (spotArea is not null) ShowAreaMap(spotArea, spot);
         if (fishList is null)
             return;
 
@@ -220,6 +278,17 @@ public sealed partial class NativeJournalWindow
             AddFishGroup("NOT CAUGHT", missing, revealNames: false);
         RefreshFishListLayout();
         fishList.ScrollToStart();
+    }
+
+    // Live-switches which area's dropdown is open to whichever one holds the
+    // given spot, if that area isn't already the open one. Opening it fires
+    // its own OnToggle(true), which collapses every other area for us (see
+    // the accordion logic built in SelectRegion) - this just has to open it.
+    private void OpenAreaContaining(JournalSpot spot)
+    {
+        JournalArea? area = selectedRegion?.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == spot.Id));
+        if (area is not null && areaHeaderByArea.TryGetValue(area, out var header) && header.IsCollapsed)
+            header.IsCollapsed = false;
     }
 
     private void AddFishGroup(string heading, IReadOnlyList<JournalFish> fish, bool revealNames)

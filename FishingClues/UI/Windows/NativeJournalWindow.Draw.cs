@@ -7,6 +7,7 @@ using Dalamud.Game.Addon.Events;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.System.Input;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using KamiToolKit.BaseTypes;
 using KamiToolKit.Nodes;
@@ -101,6 +102,95 @@ public sealed partial class NativeJournalWindow
         if (!ReferenceEquals(previousPartialHover, partialHover)) {
             if (previousPartialHover is not null && fishButtons.ContainsKey(previousPartialHover)) previousPartialHover.HideTooltip();
             partialHover?.ShowTooltip();
+        }
+        // Same native quirk as the fishList block above (a button whose own
+        // bounds are only partially inside its scrolling clip region never
+        // receives the click at all), applied to the area list - which
+        // needs it far more often now that the map panel usually sits open
+        // underneath it (see ReservedMapHeight): whatever area happens to
+        // land right where the shrunk-down list's bottom edge falls (an
+        // area header, or a discovered hole's row inside the one area
+        // that's currently expanded) renders its label just fine but
+        // silently eats every click, exactly like "Moraby Drydocks" being
+        // impossible to open. A collapsed header just gets un-collapsed
+        // directly (equivalent to what its own native click would have
+        // triggered); an expanded header's inner hole rows are checked the
+        // same way the fish rows are, since they're only ever partially
+        // clipped when the area itself is the one straddling the edge.
+        if (!draggingDivider && areaList is not null && stage != null
+            && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon)
+        {
+            float areaScale = Math.Max(0.1f, addon->Scale);
+            Vector2 areaOrigin = areaList.ScreenPosition;
+            float areaX = (mouse.PositionX - areaOrigin.X) / areaScale;
+            float areaY = (mouse.PositionY - areaOrigin.Y) / areaScale;
+            if (areaX >= 0 && areaX < areaList.ContentNode.Width && areaY >= 0 && areaY < areaList.Height)
+            {
+                float areaOffset = areaList.ScrollBarNode.ScrollPosition;
+                bool areaClicked = (mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0;
+                foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
+                {
+                    float headerTop = header.Y - areaOffset;
+                    // Only the header's own clickable title strip (see
+                    // AnimatedAreaHeaderNode.OnRecalculateLayout's hardcoded
+                    // 28px title height - the same value whether the header
+                    // is collapsed or expanded, since Height there IS 28 when
+                    // collapsed) matters for "is the thing you'd click to
+                    // expand/collapse this header partially clipped". Using
+                    // header.Height here instead - the FULL expanded block,
+                    // title plus every child row - was the bug behind
+                    // "Moraby Drydocks unclickable": whenever an expanded
+                    // header's total height overflowed the list (because its
+                    // LAST row sat at the clipped edge), every row under that
+                    // header, including ones sitting comfortably in full
+                    // view earlier in the list, got funneled into this
+                    // title-only branch instead of reaching the per-row
+                    // highlight/click handling below.
+                    const float headerTitleHeight = 28.0f;
+                    float headerTitleBottom = headerTop + headerTitleHeight;
+                    bool headerTitlePartial = headerTop < 0 || headerTitleBottom > areaList.Height;
+                    if (headerTitlePartial)
+                    {
+                        if (areaY >= Math.Max(0, headerTop) && areaY < Math.Min(areaList.Height, headerTitleBottom))
+                        {
+                            addonEvents.SetCursor(AddonCursorType.Clickable);
+                            ownsResizeCursor = true;
+                            if (areaClicked && header.IsCollapsed) header.IsCollapsed = false;
+                            break;
+                        }
+                        continue;
+                    }
+                    if (header.IsCollapsed) continue;
+                    bool foundSpot = false;
+                    foreach (var spotButton in header.GetNodes<ListButtonNode>())
+                    {
+                        float spotTop = headerTop + spotButton.Y;
+                        float spotBottom = spotTop + spotButton.Height;
+                        bool spotPartial = spotTop < 0 || spotBottom > areaList.Height;
+                        if (spotPartial && areaY >= Math.Max(0, spotTop) && areaY < Math.Min(areaList.Height, spotBottom))
+                        {
+                            spotButton.HoverBackgroundNode.Alpha = 1;
+                            addonEvents.SetCursor(AddonCursorType.Clickable);
+                            ownsResizeCursor = true;
+                            if (areaClicked)
+                            {
+                                // A normal, non-clipped row click plays its
+                                // sound automatically as part of the native
+                                // AtkComponentButton click reaction - calling
+                                // OnClick directly here, bypassing that
+                                // native dispatch entirely (the whole reason
+                                // this manual path exists), skips it too, so
+                                // it needs to be triggered by hand.
+                                UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
+                                spotButton.OnClick?.Invoke();
+                            }
+                            foundSpot = true;
+                            break;
+                        }
+                    }
+                    if (foundSpot) break;
+                }
+            }
         }
         if (!draggingDivider && stage != null
             && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon

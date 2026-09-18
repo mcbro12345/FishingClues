@@ -15,8 +15,6 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
 {
     private const float DefaultRegionWidth = 181.0f;
     private const float DefaultAreaWidth = 286.0f;
-    private const float DefaultAreaDropdownLeftInset = 0.0f;
-    private const float DefaultAreaDropdownRightInset = 0.0f;
 
     private bool capturingKeybind;
 
@@ -154,33 +152,6 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
                 SaveLayout();
             }
             DrawWrappedHint("Lets you drag the region and area column edges directly in the journal, the same way the fish / details divider already works.");
-
-            ImGui.Spacing();
-            ImGui.Text("Area dropdown left inset");
-            float dropdownLeftInset = configuration.NativeAreaDropdownLeftInset;
-            if (ImGui.SliderFloat("##AreaDropdownLeftInset", ref dropdownLeftInset, -150.0f, 150.0f, "%.0f"))
-            {
-                configuration.NativeAreaDropdownLeftInset = dropdownLeftInset;
-                SaveLayout();
-            }
-            if (ImGui.Button("Restore default left inset##AreaDropdownLeftInsetDefault"))
-            {
-                configuration.NativeAreaDropdownLeftInset = DefaultAreaDropdownLeftInset;
-                SaveLayout();
-            }
-            ImGui.Text("Area dropdown right inset");
-            float dropdownRightInset = configuration.NativeAreaDropdownRightInset;
-            if (ImGui.SliderFloat("##AreaDropdownRightInset", ref dropdownRightInset, -150.0f, 150.0f, "%.0f"))
-            {
-                configuration.NativeAreaDropdownRightInset = dropdownRightInset;
-                SaveLayout();
-            }
-            if (ImGui.Button("Restore default right inset##AreaDropdownRightInsetDefault"))
-            {
-                configuration.NativeAreaDropdownRightInset = DefaultAreaDropdownRightInset;
-                SaveLayout();
-            }
-            DrawWrappedHint("0 on both sides is the recommended layout. Positive shrinks the dropdown box in from that edge; negative extends it past that edge.");
             ImGui.Unindent();
         }
     }

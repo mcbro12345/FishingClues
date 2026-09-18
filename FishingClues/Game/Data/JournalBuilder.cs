@@ -1,5 +1,4 @@
 using Dalamud.Game.NativeWrapper;
-using Dalamud.Utility;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -39,6 +38,25 @@ public sealed class JournalBuilder
     private long lastJournalBuild;
     private ulong journalCharacterId;
     private long nextFishRevealScan;
+    // Tracks which fishing holes were unlocked as of the last build, so a hole
+    // that flips from locked to unlocked between builds can be surfaced once
+    // to the journal window as "just discovered". Null means this character
+    // hasn't had a first build yet - that first build seeds the set without
+    // treating every already-unlocked hole as newly discovered.
+    private HashSet<uint>? knownUnlockedSpots;
+
+    // Set the moment a hole is seen flipping to unlocked; consumed (and
+    // cleared) the next time the journal window is opened, so it always
+    // reflects "discovered since you last opened the log", not merely
+    // "discovered since the last 2-second cache refresh".
+    public uint? PendingDiscoveredSpotId { get; private set; }
+
+    public uint? ConsumePendingDiscoveredSpot()
+    {
+        uint? id = PendingDiscoveredSpotId;
+        PendingDiscoveredSpotId = null;
+        return id;
+    }
 
     // Fired when the logged-in character changes, so other services can drop
     // their own per-character transient state (e.g. a pending log-replacement).
@@ -122,8 +140,12 @@ public sealed class JournalBuilder
             MapSheet? mapRow = territoryRow?.Map.ValueNullable;
             (Vector2? mapPixel, string? mapTexturePath) = BuildMapInfo(mapRow, spot.X, spot.Z);
             spots.Add(new JournalSpot(spot.RowId, spotName, area, region, spot.TerritoryType.RowId, mapId,
-                order, isUnlocked, regionPlaceNameId, spotPlaceNameId, entries, mapPixel, mapTexturePath));
+                order, isUnlocked, regionPlaceNameId, spotPlaceNameId, entries, mapPixel, mapTexturePath,
+                new Vector2(spot.X, spot.Z), spot.Radius));
         }
+
+        if (!configuration.DebugRevealEverything)
+            UpdateDiscoveryTracking(spots);
 
         journalCache = spots.GroupBy(s => s.Region)
             .OrderBy(g => RegionIndex(g.Key)).ThenBy(g => g.Min(s => s.Order)).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
@@ -139,28 +161,42 @@ public sealed class JournalBuilder
         return journalCache;
     }
 
-    // Converts a fishing hole's raw world X/Z into a pixel position on its
-    // area's 2048x2048 map texture (1024,1024 = center), using the same
-    // Map SizeFactor/Offset the game itself uses to place markers, and
-    // resolves the game path of that map's own texture.
+    // Resolves a fishing hole's pixel position on its area's 2048x2048 map
+    // texture (1024,1024 = center), plus the game path of that map's own
+    // texture.
     //
-    // The world->human "map coordinate" step below is Dalamud's own vetted
-    // MapUtil.WorldToMap; the human-coordinate->pixel step and the texture
-    // path convention ("ui/map/{folder}/{variant}/{folder}{variant}_m.tex")
-    // follow the widely-used FFXIV community formula/convention, not an
-    // official Dalamud API - if a marker looks visibly off or the map image
-    // doesn't load, that conversion is the first thing to check.
-    private static (Vector2? Pixel, string? TexturePath) BuildMapInfo(MapSheet? map, short worldX, short worldZ)
+    // FishingSpot.X/Z are NOT a live world position in yalms - unlike an
+    // actual player/object position, they come pre-baked as a map-texture
+    // pixel coordinate already (per xivapi/ffxiv-datamining's
+    // MapCoordinates.md, which names FishingSpot specifically as an example
+    // of this: "conversion of map texture pixel coordinates (such as
+    // FishingSpot coordinates) to in-game 2D map coordinates"). So they can
+    // be used directly as the pixel position on the 2048x2048 texture with
+    // no further math - no SizeFactor/Offset scaling, and no world->map
+    // conversion (Dalamud's MapUtil.WorldToMap) involved at all; that call
+    // is for converting an actual live position (e.g. the player's own X/Z)
+    // and produces nonsense here, which is what previously sent markers
+    // wildly outside the visible map (pixel values in the thousands instead
+    // of the expected 0-2048 range). If a marker looks visibly off in the
+    // future, this assumption - that these particular sheet fields are
+    // already pixel-space - is the first thing to re-check, not the pixel
+    // formula itself.
+    //
+    // The texture path always uses the base "_m.tex" name, never
+    // "_m_hr1.tex" - KamiToolKit's own LoadTexture strips any "_hr1" suffix
+    // itself and lets the game pick the right resolution variant, so passing
+    // one in has no effect either way; a live /xllog capture showing
+    // Penumbra fail to load "..._m_hr1.tex" for zones the player visited was
+    // the game's own automatic high-res upgrade attempt, not evidence our
+    // own path was wrong. If the map image still doesn't render, the next
+    // thing to check is whether this exact path passes IDataManager's
+    // FileExists check (see the debug log line in EnsureMapTexture).
+    private static (Vector2? Pixel, string? TexturePath) BuildMapInfo(MapSheet? map, short spotPixelX, short spotPixelZ)
     {
         if (map is not MapSheet mapRow || mapRow.RowId == 0)
             return (null, null);
 
-        Vector2 humanCoordinate = MapUtil.WorldToMap(new Vector2(worldX, worldZ), mapRow);
-        float scale = mapRow.SizeFactor / 100.0f;
-        if (scale <= 0) return (null, null);
-        var pixel = new Vector2(
-            1024.0f + (humanCoordinate.X - 1.0f) * 50.0f * scale,
-            1024.0f + (humanCoordinate.Y - 1.0f) * 50.0f * scale);
+        var pixel = new Vector2(spotPixelX, spotPixelZ);
 
         string id = mapRow.Id.ToString();
         int slash = id.IndexOf('/');
@@ -178,7 +214,28 @@ public sealed class JournalBuilder
         journalCharacterId = character;
         vanillaRevealedRegions.Clear();
         journalCache = null;
+        knownUnlockedSpots = null;
+        PendingDiscoveredSpotId = null;
         CharacterChanged?.Invoke();
+    }
+
+    // Diffs this build's unlocked holes against the last build's. The first
+    // build for a character only seeds the baseline - everything already
+    // unlocked at that point is not "new". After that, any hole flipping to
+    // unlocked becomes the pending discovery (last one wins if more than one
+    // flipped between builds, which in practice means "most recent").
+    private void UpdateDiscoveryTracking(List<JournalSpot> spots)
+    {
+        var currentUnlocked = new HashSet<uint>(spots.Where(s => s.IsUnlocked).Select(s => s.Id));
+        if (knownUnlockedSpots is not null)
+        {
+            foreach (uint id in currentUnlocked)
+            {
+                if (!knownUnlockedSpots.Contains(id))
+                    PendingDiscoveredSpotId = id;
+            }
+        }
+        knownUnlockedSpots = currentUnlocked;
     }
 
     public unsafe void ObserveVanillaRegionLabels()
@@ -223,6 +280,49 @@ public sealed class JournalBuilder
             journalCache = null;
             Services.PluginInterface.SavePluginConfig(configuration);
         }
+    }
+
+    // Finds where the player actually is right now among the built journal
+    // tree, for the "open to where I'm standing" auto-navigate on the very
+    // first time the journal window is opened in a session. Matches by the
+    // player's current territory (which maps 1:1 onto a single JournalArea),
+    // then - among that area's unlocked holes - by whichever is physically
+    // closest to the player, so "the fishing hole you are at" means the
+    // nearest one, not just any hole in the zone. Returns nulls for the area
+    // and region too if the player isn't in any zone this journal tracks, and
+    // a null spot (area/region still filled in) if the zone has no unlocked
+    // hole yet - the caller then just opens the area with nothing selected.
+    public static (JournalRegion? Region, JournalArea? Area, JournalSpot? Spot) LocateCurrentLocation(IReadOnlyList<JournalRegion> regions)
+    {
+        uint territory = Services.ClientState.TerritoryType;
+        if (territory == 0) return (null, null, null);
+        Vector3? playerPosition = Services.ObjectTable.LocalPlayer?.Position;
+
+        JournalRegion? matchedRegion = null;
+        JournalArea? matchedArea = null;
+        JournalSpot? nearestUnlocked = null;
+        float nearestDistance = float.MaxValue;
+        foreach (JournalRegion region in regions)
+        {
+            foreach (JournalArea area in region.Areas)
+            {
+                foreach (JournalSpot spot in area.Spots)
+                {
+                    if (spot.TerritoryId != territory) continue;
+                    matchedRegion ??= region;
+                    matchedArea ??= area;
+                    if (!spot.IsUnlocked || spot.WorldPosition is not Vector2 worldPos || playerPosition is not Vector3 pos)
+                        continue;
+                    float distance = Vector2.DistanceSquared(worldPos, new Vector2(pos.X, pos.Z));
+                    if (distance < nearestDistance)
+                    {
+                        nearestDistance = distance;
+                        nearestUnlocked = spot;
+                    }
+                }
+            }
+        }
+        return (matchedRegion, matchedArea, nearestUnlocked);
     }
 
     private static int RegionIndex(string region)

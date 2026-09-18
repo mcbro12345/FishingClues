@@ -19,6 +19,7 @@ internal sealed class Services
     [PluginService] internal static IFramework Framework { get; set; } = null!;
     [PluginService] internal static IGameGui GameGui { get; set; } = null!;
     [PluginService] internal static IClientState ClientState { get; set; } = null!;
+    [PluginService] internal static IObjectTable ObjectTable { get; set; } = null!;
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; set; } = null!;
     [PluginService] internal static IAddonEventManager AddonEvents { get; set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; set; } = null!;

@@ -44,6 +44,15 @@ public sealed class Configuration : IPluginConfiguration
     public float DetailsHeightRatio { get; set; } = 0.38f;
     public bool ShowOpenNormalLogButton { get; set; } = true;
     public bool ShowAreaLocationMap { get; set; } = true;
+    // Whether the in-window "Show Map/Hide Map" toggle was left open or
+    // closed - carried over between journal openings rather than always
+    // starting back open, the same way the rest of the journal's own layout
+    // (column widths, divider positions) already persists.
+    public bool MapPanelOpen { get; set; } = true;
+    // The map panel's button/divider/title/image/border layout used to be
+    // tunable here (Settings -> Debug sliders); those settings were removed
+    // once the layout was dialed in, and the values they landed on are now
+    // fixed constants in NativeJournalWindow.Map.cs instead.
     public bool ReplaceNormalFishingLog { get; set; } = true;
     public bool JournalKeybindEnabled { get; set; }
     public int JournalKeybindKey { get; set; }

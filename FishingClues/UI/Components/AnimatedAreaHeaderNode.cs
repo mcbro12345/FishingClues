@@ -11,6 +11,13 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
     private long started;
     private bool ready;
     public bool RestoreExpandedOnNextTick { get; set; }
+
+    // Set immediately before this header is collapsed programmatically (by
+    // the accordion logic closing every other area when one is opened) so
+    // its own OnToggle(false) handler can tell that apart from the user
+    // trying to manually collapse the one area that's allowed to stay open,
+    // and let it through instead of denying it.
+    public bool AllowProgrammaticCollapse { get; set; }
     public void InitializeAnimation()
     {
         progress = target = IsCollapsed ? 0 : 1;
@@ -18,6 +25,12 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
         ClipListContents = false;
         RecalculateLayout();
     }
+
+    // Only the opening animation is kept (see Tick) - closing snaps shut
+    // instantly instead. This only needs to cover the open direction, and
+    // is shorter than the old shared open/close duration (160ms) so opening
+    // an area feels snappier.
+    private const float OpenAnimationDurationMs = 90.0f;
 
     public bool Tick()
     {
@@ -34,9 +47,18 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
             from = progress;
             target = next;
             started = Environment.TickCount64;
+            if (target == 0)
+            {
+                // Closing: no animation, snap straight to collapsed so the
+                // area shuts instantly instead of playing the same tween
+                // used for opening.
+                progress = 0;
+                RecalculateLayout();
+                return true;
+            }
         }
         if (progress == target) return false;
-        float t = Math.Clamp((Environment.TickCount64 - started) / 160.0f, 0, 1);
+        float t = Math.Clamp((Environment.TickCount64 - started) / OpenAnimationDurationMs, 0, 1);
         progress = from + (target - from) * (t * t * (3 - 2 * t));
         RecalculateLayout();
         return true;
