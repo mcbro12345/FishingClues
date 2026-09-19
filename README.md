@@ -9,7 +9,7 @@ A Dalamud plugin for FFXIV that gives you a better Fishing Log: spoiler-consciou
 
   <kbd>
 
-  ![Spoiler Image](https://github.com/user-attachments/assets/8b12f65f-c947-4e65-97cf-1cdd892ff985)
+  ![Spoiler Image](https://github.com/user-attachments/assets/fcf082ff-1c4a-44cb-8cd3-fa67a867c807)
 
   </kbd>
 </details>
@@ -21,7 +21,7 @@ A Dalamud plugin for FFXIV that gives you a better Fishing Log: spoiler-consciou
 
   <kbd>
 
-  ![Spoiler Image](https://github.com/user-attachments/assets/00ef2d8f-7c14-49fd-a3fb-8420d8e6460a)
+  ![Spoiler Image](https://github.com/user-attachments/assets/3898472a-2348-43e9-84e9-5f53f4086cb6)
 
   </kbd>
 </details>
