@@ -53,7 +53,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
 
         Services.CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the native Fishing Clues journal.\n/fishingclues settings → Open settings.",
+            HelpMessage = "Open the Fishing Clues journal.\n/fishingclues settings → Open settings.",
         });
         Services.Framework.Update += OnFrameworkUpdate;
         Services.PluginInterface.UiBuilder.Draw += OnDraw;

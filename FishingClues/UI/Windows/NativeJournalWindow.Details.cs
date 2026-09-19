@@ -50,7 +50,12 @@ public sealed partial class NativeJournalWindow
         }
         else if (selectedDetails is { } section)
         {
-            AddDetailLine(section.Heading);
+            // no headroom needed above a plain heading (only the big guide name has it)
+            detailsList.ContentNode.FirstItemSpacing = 0.0f;
+            string heading = section.Heading == "????" && unknownFishNumbers.TryGetValue(selectedFish, out int number)
+                ? $"Unknown Fish #{number}"
+                : section.Heading;
+            AddDetailLine(heading);
             foreach (string line in section.Lines) AddDetailLine(line);
         }
         detailsList.RecalculateSizes();
@@ -60,8 +65,15 @@ public sealed partial class NativeJournalWindow
     private void RenderGuideDetails()
     {
         if (detailsList is null || selectedGuide is null) return;
+        // an undiscovered fish is headed "Unknown Fish #N", numbered like its list entry
+        string name = !GuideMode && unknownFishNumbers.TryGetValue(selectedFish, out int unknownNumber)
+            ? $"Unknown Fish {unknownNumber}" // this font draws '#' as a numero sign, so no symbol
+            : selectedGuide.Name;
+        // the big name's own box already carries headroom (see AddDetailLine), so the
+        // list adds none above it
+        detailsList.ContentNode.FirstItemSpacing = 0.0f;
         // the fish's name, in the same font and size as the Region / Area / Fish headings
-        AddDetailLine(selectedGuide.Name, 16, FontType.Jupiter);
+        AddDetailLine(name, 16, FontType.Jupiter);
         if (GuideMode) detailsList.ContentNode.AddNode(new DetailSelectorRow<GuideLocation>(
             "Locations:", selectedGuide.Locations, guideLocation, l => l.Label,
             l => { guideLocation = l; guideLocationPending = guideDetailsPending = true; }, "Unknown") { Width = Math.Max(80, detailsList.Width - 24) });
@@ -96,7 +108,7 @@ public sealed partial class NativeJournalWindow
         {
             if (Math.Abs(label.Width - width) < 1) continue;
             label.Width = width;
-            label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2.0f) + (label.FontSize > 14 ? 8.0f : 0.0f);
+            label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2.0f) + (label.FontSize > 14 ? 3.0f : 0.0f);
         }
         foreach (var row in detailsList.ContentNode.GetNodes<ItemDetailRow>()) row.Width = width;
         foreach (var row in detailsList.ContentNode.GetNodes<DetailSelectorRow<GuideLocation>>()) row.Width = width;
@@ -143,7 +155,7 @@ public sealed partial class NativeJournalWindow
         {
             // the big heading's glyphs rise above a snug box and get clipped at the
             // list's top edge: give it headroom and sit the text at the bottom of it
-            label.Height += 8.0f;
+            label.Height += 3.0f;
             label.AlignmentType = AlignmentType.BottomLeft;
         }
         (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(label);

@@ -21,7 +21,7 @@ public sealed class Configuration : IPluginConfiguration
     public const float DropdownRightInsetBaseline = -7.0f;
     public bool AutoRefreshFishData { get; set; } = true;
     public bool DisableAvailabilityCountdown { get; set; }
-    public bool Use12HourTime { get; set; }
+    public bool Use12HourTime { get; set; } = true;
     public bool DebugRevealEverything { get; set; }
     public bool UncaughtFishFirst { get; set; } = true;
     public bool SortBaitByItemLevel { get; set; }

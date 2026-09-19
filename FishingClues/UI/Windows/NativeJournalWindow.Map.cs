@@ -561,6 +561,7 @@ public sealed partial class NativeJournalWindow
                 mapPanY = sessionState.MapPanY;
                 ClampMapPan();
                 restoredView = true;
+                lastCenteredFocus = null; // the saved view wins over any centering
             }
         }
         if (!restoredView && preserveView)
@@ -1270,8 +1271,20 @@ public sealed partial class NativeJournalWindow
         return null;
     }
 
+    // The map is first centered while the window is still being built, before
+    // the clip has any size (it is laid out afterwards), so that first centering
+    // is computed against a 0x0 view and lands off-center. The first layout that
+    // sizes the clip therefore centers on the same point again.
+    private Vector2? lastCenteredFocus;
+    private bool mapInitialCenterPending = true;
+
     private void CenterMapOn(Vector2 focusPixel)
     {
+        // Zoomed all the way out the whole map is on show, so it is centered in the
+        // panel like the game's own map; centering on a hole or a cluster of them
+        // there just shoved the map sideways/up and left a black band along one edge.
+        if (mapZoom <= MinMapZoom + 0.001f) focusPixel = new Vector2(1024.0f, 1024.0f);
+        lastCenteredFocus = focusPixel;
         float scale = MapScale();
         float clipWidth = mapClip?.Width ?? EffectiveMapWidth(areaWidthSetting);
         float clipHeight = mapClip?.Height ?? EffectiveMapHeight();
@@ -1447,6 +1460,15 @@ public sealed partial class NativeJournalWindow
             mapClip.Position = contentOrigin + new Vector2(areaX, captionTop + MapCaptionHeight - MapPanelSpacing) + mapImageOffset;
             mapClip.Size = new Vector2(mapWidth, mapHeight);
             if (mapBackdrop is not null) mapBackdrop.Size = new Vector2(mapWidth, mapHeight);
+            if (mapInitialCenterPending)
+            {
+                mapInitialCenterPending = false;
+                if (lastCenteredFocus is Vector2 focus)
+                {
+                    CenterMapOn(focus);
+                    ApplyMapPan();
+                }
+            }
         }
 
         // A simple gold frame around the clip rect, standing in for the

@@ -237,8 +237,13 @@ public sealed partial class NativeJournalWindow
     // A row destroyed while hovered never fires its own MouseOut, so its
     // tooltip needs closing here; a row left in availabilityRows after being
     // destroyed would get SetAvailability called on it by the 30s refresh.
+    // The number each undiscovered fish carries in the list ("???? #2"), so its
+    // details heading can read "Unknown fish #2".
+    private readonly Dictionary<uint, int> unknownFishNumbers = new();
+
     private void ClearFishList()
     {
+        unknownFishNumbers.Clear();
         fishHeader?.HideTooltip();
         fishButtons.Clear();
         availabilityRows.Clear();
@@ -313,6 +318,7 @@ public sealed partial class NativeJournalWindow
         {
             JournalFish entry = fish[i];
             string label = revealNames || entry.IdentityVisible ? entry.Name : $"???? #{i + 1}";
+            if (!(revealNames || entry.IdentityVisible)) unknownFishNumbers[entry.FishParameterId] = i + 1;
             var row = new FishEntryRowNode(entry, label, () =>
             {
                 selectedFish = entry.FishParameterId;
