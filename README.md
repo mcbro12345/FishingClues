@@ -18,8 +18,6 @@ A Dalamud plugin for FFXIV that gives you a better Fishing Log: spoiler-consciou
 - `/fishingclues` - open the journal
 - `/fishingclues settings` - open settings
 
-An optional keybind can also be set in settings to open the journal directly, when the normal Fishing Log isn't being replaced.
-
 ## Installation Instructions
 
 1. Open the game chat and type `/xlsettings`, then click the **Experimental** tab.
