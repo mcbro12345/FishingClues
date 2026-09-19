@@ -34,7 +34,6 @@ public sealed class FishDetailsFormatter
         }
         lines.AddRange(BuildRequirementLines(fish.ItemId, fish.SpotId));
         string heading = fish.IdentityVisible ? fish.Name : "????";
-        if (fish.Level > 0) heading += $"   Lv. {fish.Level}";
         return new FishClueSection(heading, lines);
     }
 

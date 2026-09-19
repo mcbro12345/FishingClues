@@ -279,6 +279,9 @@ public sealed partial class NativeJournalWindow
                 LayoutAttachedNodes();
                 if (detailsList is not null) RestoreScroll(detailsList, scroll);
                 if (fishList is not null) RestoreScroll(fishList, fishScroll);
+                // Have the game pick up the resized clipping/collision areas now
+                // rather than a frame later, so the panels don't trail the divider.
+                addon->UpdateCollisionNodeList(false);
             }
         }
         UpdateMapInteraction(addon, mouse, stage);

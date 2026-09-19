@@ -395,6 +395,12 @@ public sealed partial class NativeJournalWindow
         return Services.TextureProvider.CreateFromRaw(specification, pixels, "FishingCluesMapBackdrop");
     }
 
+    // A hole picked while the map was hidden, applied when it is shown again.
+    private bool hasPendingMapFocus;
+    private JournalSpot? pendingMapFocusSpot;
+    private bool pendingMapZoomToSpot;
+    private bool pendingMapAreaChanged;
+
     private void ToggleMapVisibility()
     {
         mapPanelVisible = !mapPanelVisible;
@@ -414,7 +420,18 @@ public sealed partial class NativeJournalWindow
         // as it was left.
         if (mapPanelVisible)
         {
-            if (mapArea is not null) ShowAreaMap(mapArea, preserveView: true);
+            if (mapArea is not null && hasPendingMapFocus)
+            {
+                // A hole was picked while the map was hidden: show it now exactly
+                // as if the map had been open when it was picked.
+                hasPendingMapFocus = false;
+                restoreMapView = false;
+                if (pendingMapAreaChanged) mapZoom = MinMapZoom;
+                pendingMapAreaChanged = false;
+                ShowAreaMap(mapArea, pendingMapFocusSpot, pendingMapZoomToSpot);
+                pendingMapFocusSpot = null;
+            }
+            else if (mapArea is not null) ShowAreaMap(mapArea, preserveView: true);
             else
             {
                 mapZoom = MinMapZoom;
@@ -487,7 +504,16 @@ public sealed partial class NativeJournalWindow
         int discovered = area.Spots.Count(s => s.IsUnlocked);
         if (mapDiscoveredLabel is not null)
             mapDiscoveredLabel.String = $"Locations Discovered: {discovered}/{area.Spots.Count}";
-        if (!MapEnabled) return;
+        if (!MapEnabled)
+        {
+            // Hidden: remember what was asked for so the map, when shown again,
+            // looks as if it had been updated all along (see ToggleMapVisibility).
+            hasPendingMapFocus = true;
+            pendingMapFocusSpot = focusSpot;
+            pendingMapZoomToSpot = zoomToSpot;
+            pendingMapAreaChanged |= areaChanged;
+            return;
+        }
 
         // A new area starts back at the zoomed-out fit view - carrying over
         // whatever zoom/pan the player left the previous area's map at would

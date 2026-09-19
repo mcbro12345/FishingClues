@@ -313,8 +313,7 @@ public sealed partial class NativeJournalWindow
         {
             JournalFish entry = fish[i];
             string label = revealNames || entry.IdentityVisible ? entry.Name : $"???? #{i + 1}";
-            string rowLabel = entry.Level > 0 ? $"{label}   Lv. {entry.Level}" : label;
-            var row = new FishEntryRowNode(entry, rowLabel, () =>
+            var row = new FishEntryRowNode(entry, label, () =>
             {
                 selectedFish = entry.FishParameterId;
                 UpdateFishSelection();

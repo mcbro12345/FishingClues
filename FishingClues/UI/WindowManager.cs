@@ -248,8 +248,7 @@ public sealed class WindowManager
         {
             HiddenFish entry = fish[i];
             string identity = entry.KnownName ?? (fish.Count == 1 ? "????" : $"???? #{i + 1}");
-            string heading = entry.Level > 0 ? $"{identity}   Lv. {entry.Level}" : identity;
-            sections.Add(new FishClueSection(heading, formatter.BuildRequirementLines(entry.ItemId)));
+            sections.Add(new FishClueSection(identity,formatter.BuildRequirementLines(entry.ItemId)));
         }
         OpenSections(sections);
     }
