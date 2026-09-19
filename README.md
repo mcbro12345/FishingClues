@@ -4,23 +4,25 @@ A Dalamud plugin for FFXIV that gives you a better Fishing Log: spoiler-consciou
 
 <details>
   <summary>
-    <a href="#">Click to view the Fishing Clues Journal</a> <b><font color="#fffff">(Spoilers for some fish and locations!)</font></b>
+    Click to view the Fishing Clues Journal <strong>(Spoilers for some fish and locations!)</strong>
   </summary>
 
   <kbd>
 
   ![Spoiler Image](https://github.com/user-attachments/assets/8b12f65f-c947-4e65-97cf-1cdd892ff985)
+
   </kbd>
 </details>
 
 <details>
   <summary>
-    <a href="#">Click to view the Fishing Clues All-Fish Search Window</a> <b><font color="fffff">(Spoilers for some fish and locations!)</font></b>
+    Click to view the Fishing Clues All-Fish Search Window <strong>(Spoilers for some fish and locations!)</strong>
   </summary>
 
   <kbd>
 
   ![Spoiler Image](https://github.com/user-attachments/assets/00ef2d8f-7c14-49fd-a3fb-8420d8e6460a)
+
   </kbd>
 </details>
 
