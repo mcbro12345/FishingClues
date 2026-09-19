@@ -43,7 +43,7 @@ public sealed partial class NativeJournalWindow
     // every time a marker was clicked.
     private void RebuildMapMarkers(IReadOnlyList<JournalSpot> spots)
     {
-        if (mapClip is null || mapContent is null) return;
+        if (mapClip is null || mapContent is null || markerLayer is null || tooltipLayer is null) return;
         var wanted = spots.Where(s => s.MapPixelPosition is not null).ToDictionary(s => s.Id);
 
         foreach (var (icon, data) in mapMarkers.ToList())
@@ -67,10 +67,10 @@ public sealed partial class NativeJournalWindow
                 FitTexture = true,
                 Alpha = 0.0f,
             };
-            icon.AttachNode(mapClip);
+            icon.AttachNode(markerLayer);
             mapMarkers.Add(icon, (spot, circle));
             _ = LoadMarkerIconAsync(icon);
-            // The tooltip goes on last so it draws over the icons.
+            // The tooltip is on the top layer, so it draws over every icon.
             var tooltip = new BackgroundTextNode
             {
                 FontType = FontType.Axis,
@@ -81,7 +81,7 @@ public sealed partial class NativeJournalWindow
                 Alpha = 0.0f,
                 Position = OffscreenTooltipPosition,
             };
-            tooltip.AttachNode(mapClip);
+            tooltip.AttachNode(tooltipLayer);
             markerTooltips.Add(icon, tooltip);
         }
         if (playerMarker is null) CreatePlayerMarker();

@@ -44,7 +44,7 @@ public sealed partial class NativeJournalWindow
 
     private void CreatePlayerMarker()
     {
-        if (mapClip is null) return;
+        if (playerLayer is null) return;
         // Cone first so the drop draws on top of it.
         playerCone = new ImGuiImageNode
         {
@@ -54,7 +54,7 @@ public sealed partial class NativeJournalWindow
             Alpha = 0.0f,
             IsVisible = false,
         };
-        playerCone.AttachNode(mapClip);
+        playerCone.AttachNode(playerLayer);
         _ = LoadPlayerConeAsync(playerCone);
         playerMarker = new ImGuiImageNode
         {
@@ -64,7 +64,7 @@ public sealed partial class NativeJournalWindow
             Alpha = 0.0f,
             IsVisible = false,
         };
-        playerMarker.AttachNode(mapClip);
+        playerMarker.AttachNode(playerLayer);
         _ = LoadPlayerMarkerIconAsync(playerMarker);
     }
 

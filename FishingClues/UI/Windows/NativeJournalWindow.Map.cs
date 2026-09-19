@@ -32,6 +32,11 @@ public sealed partial class NativeJournalWindow
 
     private ResNode? mapClip;
     private ResNode? mapContent;
+    // Draw order above the map: hole icons, then the player marker, then tooltips. Each has its own
+    // layer so a marker added later still draws in the right place.
+    private ResNode? markerLayer;
+    private ResNode? playerLayer;
+    private ResNode? tooltipLayer;
     private ImGuiImageNode? mapImage;
     private ImGuiImageNode? mapBackdrop;
     private string? mapLoadedTexturePath;
@@ -94,6 +99,12 @@ public sealed partial class NativeJournalWindow
         mapBackdrop.AttachNode(mapClip);
         mapContent = new ResNode();
         mapContent.AttachNode(mapClip);
+        markerLayer = new ResNode();
+        markerLayer.AttachNode(mapClip);
+        playerLayer = new ResNode();
+        playerLayer.AttachNode(mapClip);
+        tooltipLayer = new ResNode();
+        tooltipLayer.AttachNode(mapClip);
         // Image nodes without a texture draw black, so they start transparent.
         mapImage = new ImGuiImageNode { Size = new Vector2(2048.0f, 2048.0f), Alpha = 0.0f };
         mapImage.AttachNode(mapContent);
@@ -282,6 +293,7 @@ public sealed partial class NativeJournalWindow
         mapImage = null;
         mapBackdrop = null;
         mapContent = null;
+        markerLayer = playerLayer = tooltipLayer = null;
         mapClip = null;
         mapCaptionDivider = null;
         mapAreaName = null;
