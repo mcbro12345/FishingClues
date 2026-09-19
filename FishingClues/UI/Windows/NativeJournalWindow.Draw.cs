@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Game.Addon.Events;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
@@ -17,8 +18,8 @@ namespace FishingClues.UI.Windows;
 public sealed partial class NativeJournalWindow
 {
     private const float AreaHeaderTitleHeight = 28.0f;
-    private const long AvailabilityRefreshIntervalMs = 30000;
-    private const long CountdownRefreshIntervalMs = 1000;
+    // Countdowns tick every second.
+    private const long AvailabilityRefreshIntervalMs = 1000;
 
     private FishEntryRowNode? partialHover;
     private ListButtonNode? partialAreaHover;
@@ -107,17 +108,16 @@ public sealed partial class NativeJournalWindow
     {
         if (options.GetAvailability is not { } getAvailability || availabilityRows.Count == 0
             || Environment.TickCount64 < nextAvailabilityRefresh) return;
-        // Every second while a countdown is within its last minute or so, otherwise every 30s.
-        bool countingSeconds = false;
+        float heightBefore = fishButtons.Keys.Sum(row => row.Height);
         foreach (var (row, fish) in availabilityRows)
         {
             var info = getAvailability(fish);
             if (info is null) continue;
             row.SetAvailability(info.AvailableNow, info.BadgeText, info.Tooltip);
-            countingSeconds |= info.CountingSeconds;
         }
-        nextAvailabilityRefresh = Environment.TickCount64 + (countingSeconds ? CountdownRefreshIntervalMs : AvailabilityRefreshIntervalMs);
-        RefreshFishListLayout();
+        nextAvailabilityRefresh = Environment.TickCount64 + AvailabilityRefreshIntervalMs;
+        // Relaying the list out resets the scrollbar, so only do it when a row changed height.
+        if (Math.Abs(fishButtons.Keys.Sum(row => row.Height) - heightBefore) > 0.5f) RefreshFishListLayout();
     }
 
     // The cursor's position inside a list, in the list's own units, or null when it is outside.
