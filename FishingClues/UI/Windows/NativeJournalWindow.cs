@@ -31,6 +31,10 @@ public sealed class NativeJournalSessionState
     // only the very first open auto-navigates to the player's current
     // location; every open after that is purely the persisted view above.
     public bool HasOpenedOnce { get; set; }
+    // The area map's view when the journal was last closed, restored the
+    // next time that same area's map is shown. MapZoom 0 = nothing saved.
+    public string? MapArea { get; set; }
+    public float MapZoom, MapPanX, MapPanY;
 }
 
 public sealed record RegionViewState(uint Spot, uint Fish, float AreaScroll, float FishScroll, float DetailsScroll);
@@ -129,9 +133,13 @@ public sealed partial class NativeJournalWindow(
         float fishX = regionWidth + areaWidth + ColumnGap * 2;
         contentOrigin = ContentStartPosition;
 
-        regionHeader = AddHeader("REGION", 0, regionWidth);
-        areaHeader = AddHeader("AREA", regionWidth + ColumnGap, areaWidth);
-        fishHeader = AddHeader("FISH", fishX, ContentSize.X - fishX);
+        // "Region" and "Area" use the same serif small-caps font (Jupiter) as
+        // the game's own Fishing Log headings, written in mixed case so the
+        // font renders them as small capitals.
+        regionHeader = AddHeader("Region", 0, regionWidth, FontType.Jupiter, 16);
+        areaHeader = AddHeader("Area", regionWidth + ColumnGap, areaWidth, FontType.Jupiter, 16);
+        fishHeader = AddHeader("Fish", fishX, ContentSize.X - fishX, FontType.Jupiter, 16);
+        CreateLocateButton();
         spotTitle = new CategoryTextNode { Height = 24.0f, String = "Select a fishing hole." };
         spotSummary = new LabelTextNode { Height = 24.0f, FontSize = 14, String = "" };
         spotTitle.AttachNode(this);
@@ -476,6 +484,7 @@ public sealed partial class NativeJournalWindow(
         SetHeaderLayout(regionHeader, 0.0f, regionWidth);
         SetHeaderLayout(areaHeader, regionWidth + ColumnGap, areaWidth);
         SetHeaderLayout(fishHeader, fishX, fishWidth);
+        PositionLocateButton();
 
         regionList.Position = contentOrigin + new Vector2(0.0f, HeaderHeight);
         regionList.Size = new Vector2(regionWidth, regionListHeight);
@@ -506,7 +515,7 @@ public sealed partial class NativeJournalWindow(
         if (searchInput is not null) {
             searchInput.Position = contentOrigin;
             searchInput.Width = Math.Max(100, fishWidth - 90);
-            if (searchButton is not null) searchButton.Position = contentOrigin + new Vector2(fishWidth - 80, 0);
+            if (searchButton is not null) searchButton.Position = contentOrigin + new Vector2(fishWidth - 80, 1.5f);
         }
         float fishBodyHeight = listHeight - (GuideMode ? 8 : FishSummaryHeight);
         fishList.Position = contentOrigin + new Vector2(fishX, HeaderHeight + (GuideMode ? 8 : FishSummaryHeight));
@@ -527,11 +536,11 @@ public sealed partial class NativeJournalWindow(
                 dividerHandle.Size = new Vector2(fishWidth, 12);
             }
             fishList.Height = fishHeight;
-            detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight + 3.0f);
+            detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight);
             detailsDivider.Width = fishWidth;
             Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 12.0f);
-            detailsList.Position = panelOrigin + new Vector2(8, 8);
-            detailsList.Size = new Vector2(fishWidth - 16, detailsHeight - 16);
+            detailsList.Position = panelOrigin + new Vector2(8, 0);
+            detailsList.Size = new Vector2(fishWidth - 16, detailsHeight - 8);
             ReflowDetails();
         }
 
@@ -633,7 +642,7 @@ public sealed partial class NativeJournalWindow(
             },
         };
 
-    private CategoryTextNode AddHeader(string text, float x, float width)
+    private CategoryTextNode AddHeader(string text, float x, float width, FontType? font = null, uint? fontSize = null)
     {
         var header = new CategoryTextNode
         {
@@ -641,6 +650,8 @@ public sealed partial class NativeJournalWindow(
             Size = new Vector2(width, 26.0f),
             String = text,
         };
+        if (font is FontType headerFont) header.FontType = headerFont;
+        if (fontSize is uint headerSize) header.FontSize = headerSize;
         header.AttachNode(this);
         return header;
     }

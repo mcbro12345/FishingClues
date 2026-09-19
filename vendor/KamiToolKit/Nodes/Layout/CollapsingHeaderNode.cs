@@ -56,6 +56,12 @@ public class CollapsingHeaderNode : LayoutListNode {
     public TextNode LabelTextNode => ToggleableHeaderNode.LabelTextNode;
 
     /// <summary>
+    /// Gets the header's background texture node, for callers that need to drive its hover
+    /// highlight by hand (its own hover animation only runs from native mouse events).
+    /// </summary>
+    public KamiToolKit.Nodes.Simplified.SimpleNineGridNode HeaderTextureNode => ToggleableHeaderNode.ButtonTextureNode;
+
+    /// <summary>
     /// Constructs a new <see cref="CollapsingHeaderNode"/>
     /// </summary>
     public CollapsingHeaderNode() {

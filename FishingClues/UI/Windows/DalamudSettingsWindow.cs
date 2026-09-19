@@ -14,7 +14,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
     : Window("Fishing Clues Settings###FishingCluesSettings")
 {
     private const float DefaultRegionWidth = 181.0f;
-    private const float DefaultAreaWidth = 286.0f;
+    private const float DefaultAreaWidth = 298.0f;
 
     private bool capturingKeybind;
 

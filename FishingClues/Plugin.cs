@@ -121,6 +121,12 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             configuration.NativeAreaDropdownLeftInset = 0.0f;
             configuration.Version = 18;
         }
+        if (configuration.Version < 19)
+        {
+            // new confirmed default for the area/fish divider position
+            configuration.NativeAreaWidth = 298.0f;
+            configuration.Version = 19;
+        }
     }
 
     public void Dispose()
@@ -179,6 +185,72 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         else journalKeybindWasDown = false;
     }
 
+    // Lists every image node (and the texture file behind it) in the game's own
+    // world map window, to find which assets make up its base, frame and title
+    // banner. Only produces output while that window ("AreaMap") is open.
+    private static unsafe void DescribeNativeMapTextures(StringBuilder report)
+    {
+        try
+        {
+            var addonPtr = Services.GameGui.GetAddonByName("AreaMap");
+            if (addonPtr.IsNull)
+            {
+                report.AppendLine("Native map textures: the world map window is not open (open it, then copy this report again).");
+                return;
+            }
+            var addon = (AtkUnitBase*)addonPtr.Address;
+            report.AppendLine($"Native map textures (AreaMap, scale={addon->Scale}):");
+            DescribeNodeList(report, &addon->UldManager, 1);
+        }
+        catch (Exception ex)
+        {
+            report.AppendLine($"Native map textures: failed ({ex.Message})");
+        }
+    }
+
+    private static unsafe void DescribeNodeList(StringBuilder report, AtkUldManager* manager, int depth)
+    {
+        if (manager == null || depth > 6) return;
+        for (int i = 0; i < manager->NodeListCount; i++)
+        {
+            AtkResNode* node = manager->NodeList[i];
+            if (node == null) continue;
+            string indent = new(' ', depth * 2);
+            if (node->Type == NodeType.Image)
+            {
+                var image = (AtkImageNode*)node;
+                report.AppendLine($"{indent}Image id={node->NodeId} pos=({node->X:0.#},{node->Y:0.#}) size=({node->Width:0.#}x{node->Height:0.#}) visible={node->IsVisible()} tex={ImageTexturePath(image)}");
+            }
+            else if (node->Type == NodeType.Text)
+                report.AppendLine($"{indent}Text id={node->NodeId} pos=({node->X:0.#},{node->Y:0.#}) size=({node->Width:0.#}x{node->Height:0.#}) visible={node->IsVisible()} text={((AtkTextNode*)node)->NodeText}");
+            else if ((ushort)node->Type >= 1000)
+            {
+                var component = ((AtkComponentNode*)node)->Component;
+                report.AppendLine($"{indent}Component id={node->NodeId} type={node->Type} visible={node->IsVisible()}");
+                if (component != null) DescribeNodeList(report, &component->UldManager, depth + 1);
+            }
+        }
+    }
+
+    private static unsafe string ImageTexturePath(AtkImageNode* image)
+    {
+        try
+        {
+            if (image->PartsList == null || image->PartId >= image->PartsList->PartCount) return "(no part)";
+            var part = &image->PartsList->Parts[image->PartId];
+            var asset = part->UldAsset;
+            if (asset == null) return "(no asset)";
+            string rect = $" part={image->PartId} rect=({part->U},{part->V},{part->Width}x{part->Height})";
+            var resource = asset->AtkTexture.Resource;
+            if (resource == null || resource->TexFileResourceHandle == null) return "(no resource)";
+            return resource->TexFileResourceHandle->FileName.ToString() + rect;
+        }
+        catch (Exception ex)
+        {
+            return $"(error {ex.Message})";
+        }
+    }
+
     private unsafe void LogJournalDiagnostics()
     {
         var report = new StringBuilder();
@@ -188,6 +260,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}");
         report.AppendLine($"Replacement={configuration.ReplaceNormalFishingLog}; loggedIn={Services.ClientState.IsLoggedIn}; explicit={normalLog.AllowExplicitVanillaLog}; seenVisible={normalLog.WasNormalLogVisible}; closeQueued={normalLog.IsCloseQueued}; customOpen={windowManager.IsNativeJournalOpen}");
         report.AppendLine(windowManager.DescribeMapState().TrimEnd());
+        DescribeNativeMapTextures(report);
         try
         {
             PlayerState* player = PlayerState.Instance();

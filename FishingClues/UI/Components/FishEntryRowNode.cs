@@ -12,6 +12,9 @@ public sealed class FishEntryRowNode : ListButtonNode
 {
     private const float CompactHeight = 44.0f;
     private const uint BadgeFontSize = 12;
+    // The badge's LineSpacing (see SetAvailability): one text line's height.
+    private const float BadgeLineHeight = 14.0f;
+    private const float VerticalPadding = 6.0f;
 
     private const float IconSize = 38.0f;
 
@@ -27,7 +30,6 @@ public sealed class FishEntryRowNode : ListButtonNode
         Width = 440.0f;
         Height = CompactHeight;
         String = label;
-        TextTooltip = fish.IdentityVisible ? fish.Name : "Unknown fish";
         OnClick = () => { if (!favoriteHovered) onClick(); };
 
         LabelNode.TextFlags = TextFlags.None;
@@ -93,6 +95,42 @@ public sealed class FishEntryRowNode : ListButtonNode
         OnSizeChanged();
     }
 
+    // Greedy word wrap that measures each candidate line with the badge's own
+    // font, except that a time range stays whole on one line: "during
+    // 7:00pm-9:00pm ET." / "the 9:00pm-3:00am ET window." move to the next
+    // line together instead of being cut in the middle.
+    private string WrapBadgeText(string text, float width, out int lineCount)
+    {
+        const char Glue = '';
+        string protectedText = TimePhrase.Replace(text, m => m.Value.Replace(' ', Glue));
+        var lines = new System.Collections.Generic.List<string>();
+        string line = "";
+        foreach (string word in protectedText.Split(' '))
+        {
+            string token = word.Replace(Glue, ' ');
+            string candidate = line.Length == 0 ? token : line + " " + token;
+            if (line.Length > 0 && availabilityBadge!.GetTextDrawSize(candidate, false).X > width)
+            {
+                lines.Add(line);
+                line = token;
+            }
+            else line = candidate;
+        }
+        if (line.Length > 0) lines.Add(line);
+        lineCount = Math.Max(1, lines.Count);
+        return string.Join("\n", lines);
+    }
+
+    // "7:00pm-9:00pm ET." / "9:00pm-3:00am ET window." / "21:00-03:00 ET" - just
+    // the range itself, so a lead-in word like "during" stays on the line before.
+    private static readonly System.Text.RegularExpressions.Regex TimePhrase = new(
+        @"\d{1,2}:\d{2}(?:am|pm)?-\d{1,2}:\d{2}(?:am|pm)? ET(?: window)?\.?",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private string wrappedBadgeSource = "";
+    private string wrappedBadgeText = "";
+    private int wrappedBadgeLines = 1;
+
     protected override void OnSizeChanged()
     {
         base.OnSizeChanged();
@@ -110,23 +148,28 @@ public sealed class FishEntryRowNode : ListButtonNode
         // it between the inline and stacked spot even though nothing about
         // the row itself changed) - always stacking it below the name is
         // consistent regardless of the text or which time format is active.
+        int badgeLines = 1;
         if (availabilityBadge is not null)
         {
             float wrappedWidth = Math.Max(80.0f, Width - 58.0f);
             availabilityBadge.AlignmentType = AlignmentType.Left;
-            availabilityBadge.TextFlags = TextFlags.WordWrap | TextFlags.MultiLine;
-            if (Math.Abs(availabilityBadge.Width - wrappedWidth) > 0.5f || availabilityBadge.String != availabilityRawText)
+            // Line breaks are inserted by hand (WrapBadgeText) rather than left to
+            // the native word wrap: it can split a time range across lines
+            // ("7:00pm-" / "9:00pm ET."), and the wrapped height it reports only
+            // catches up a frame after the text is set, which left the row (and
+            // its hover glow) one line too short.
+            availabilityBadge.TextFlags = TextFlags.MultiLine;
+            if (Math.Abs(availabilityBadge.Width - wrappedWidth) > 0.5f || wrappedBadgeSource != availabilityRawText)
             {
                 availabilityBadge.Width = wrappedWidth;
-                // the native text node only re-wraps its text when the text itself is
-                // re-set, not when Width changes on its own - without this, the badge
-                // keeps whatever line breaks it had at its old width and can render as
-                // a single clipped line even though its box is now the right size.
-                availabilityBadge.String = availabilityRawText;
+                wrappedBadgeSource = availabilityRawText;
+                wrappedBadgeText = WrapBadgeText(availabilityRawText, wrappedWidth, out wrappedBadgeLines);
+                availabilityBadge.String = wrappedBadgeText;
             }
+            badgeLines = wrappedBadgeLines;
         }
 
-        float textHeight = availabilityBadge is null ? 0.0f : Math.Max(14.0f, availabilityBadge.GetTextDrawSize(false).Y);
+        float textHeight = availabilityBadge is null ? 0.0f : Math.Max(14.0f, badgeLines * BadgeLineHeight);
         if (availabilityBadge is not null) availabilityBadge.Height = textHeight;
         // the 28px name box is taller than the glyphs actually drawn in it
         float nameHeight = Math.Max(14.0f, LabelNode.GetTextDrawSize(false).Y);
@@ -136,7 +179,9 @@ public sealed class FishEntryRowNode : ListButtonNode
         float contentHeight = Math.Max(IconSize, stackHeight);
         // rows match the compact height when everything fits; if the availability
         // text needs a second (or third) line, grow the row instead of clipping it
-        float desiredHeight = Math.Max(CompactHeight, contentHeight);
+        // ...with breathing room above and below the text, so the row (and its
+        // hover glow) visibly encloses every line instead of ending flush with them.
+        float desiredHeight = Math.Max(CompactHeight, contentHeight + 2.0f * VerticalPadding);
         float margin = Math.Max(0.0f, (desiredHeight - contentHeight) / 2.0f);
 
         float iconY = margin + (contentHeight - IconSize) / 2.0f;

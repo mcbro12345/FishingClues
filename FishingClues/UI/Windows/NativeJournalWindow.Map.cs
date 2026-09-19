@@ -66,8 +66,14 @@ public sealed partial class NativeJournalWindow
     // vanishing entirely.
     private const float MinCircleRawDiameter = 40.0f;
     private const float MinMapZoom = 1.0f;
-    private const float MaxMapZoom = 6.0f;
+    // At the fitted zoom of 1 the 2048px map is squeezed to ~0.14 screen
+    // pixels per map pixel; 15x takes it past 2 pixels per map pixel, about
+    // as far in as the game's own world map goes.
+    private const float MaxMapZoom = 15.0f;
     private const float MapZoomStep = 1.25f;
+    // When a hole is picked from the list, its range circle is zoomed to fill
+    // about this fraction of the map view's shorter side.
+    private const float MapCircleFitFraction = 0.7f;
     // Tiny solid-color texture generated at runtime for the map border (see
     // CreateSolidGoldBorderTexture) - a handful of pixels is plenty since it's
     // stretched flat across each border segment, never tiled.
@@ -122,7 +128,7 @@ public sealed partial class NativeJournalWindow
     private HorizontalLineNode? mapCaptionDivider;
     private LabelTextNode? mapAreaName;
     private LabelTextNode? mapDiscoveredLabel;
-    private TextButtonNode? mapToggleButton;
+    private TextureButtonNode? mapToggleButton;
     // Four thin frame lines around the map clip, in the same warm gold used
     // for the region list. These render a runtime-generated solid-color
     // texture (see CreateSolidGoldBorderTexture) rather than the native
@@ -149,9 +155,47 @@ public sealed partial class NativeJournalWindow
     // circle drawn behind that same icon, since the two always move and get
     // torn down together (see RebuildMapMarkers/UpdateMarkerLayout).
     private readonly Dictionary<ImGuiImageNode, (JournalSpot Spot, ImGuiImageNode Circle)> mapMarkers = new();
+    // One shared, hand-driven tooltip (rather than the native per-node one,
+    // which is anchored at the cursor and gets left behind when the map
+    // moves): it is re-anchored to the hovered marker's icon every time the
+    // map pans or zooms. hoveredMarker is kept through a drag that started on
+    // it, so the tooltip follows the marker while the map is dragged.
+    private readonly Dictionary<ImGuiImageNode, BackgroundTextNode> markerTooltips = new();
+    private readonly HashSet<BackgroundTextNode> measuredTooltips = new();
+    // The player's own position/facing marker (the game's blue drop icon,
+    // MapPlayerIconId) and the light cone showing which way the camera
+    // faces. Both live on the unscaled mapClip layer and are placed by hand
+    // (see UpdatePlayerMarker), so they keep their size at any map zoom.
+    private const uint MapPlayerIconId = 60443;
+    // The drop's own centre hole inside its 32x32 icon texture - the point
+    // that sits on the player's position and that the marker rotates around.
+    private static readonly Vector2 MapPlayerIconPivot = new(16.5f, 15.5f);
+    private const float MapPlayerIconSize = 32.0f;
+    // The camera cone sprite is drawn at 96x96 (see LoadPlayerConeAsync). Its
+    // rounded back corner sits at about (17.5, 76.5) inside it, and the sprite
+    // fans out toward the upper right, so its centre line points 45 degrees
+    // clockwise of straight up. The player's point is ~7 pixels forward of
+    // that back corner along the centre line (so the cone's rounded back lines
+    // up with the drop's rounded back, which sits ~6.5 pixels behind the
+    // drop's centre): (17.5, 76.5) + 7 * (sin 45, -cos 45).
+    private const int MapPlayerConeSize = 96;
+    private static readonly Vector2 MapPlayerConeOrigin = new(22.5f, 71.5f);
+    private const float MapPlayerConeBaseAngle = MathF.PI / 4.0f;
+    // +1 or -1: flip if the marker/cone turn the wrong way in game.
+    private const float MapRotationSign = 1.0f;
+    private ImGuiImageNode? playerMarker;
+    private ImGuiImageNode? playerCone;
+    private uint playerMapTerritory;
+    private (float Scale, float OffsetX, float OffsetY)? playerMapInfo;
+    private ImGuiImageNode? hoveredMarker;
     private float mapPanX;
     private float mapPanY;
     private float mapZoom = MinMapZoom;
+    // True from opening the window until the first area map is shown: that
+    // one restores the zoom/pan saved when the journal was last closed (see
+    // ShowAreaMap and SaveViewState) instead of centering on the spot.
+    private bool restoreMapView;
+    private ImGuiImageNode? mapBackdrop;
     private bool draggingMap;
     private float mapDragStartMouseX;
     private float mapDragStartMouseY;
@@ -216,6 +260,7 @@ public sealed partial class NativeJournalWindow
     {
         mapPanelVisible = configuration.MapPanelOpen;
         mapZoom = MinMapZoom;
+        restoreMapView = sessionState.MapZoom > 0.0f;
 
         mapCaptionDivider = new HorizontalLineNode { Height = 2.0f };
         mapCaptionDivider.AttachNode(this);
@@ -226,6 +271,13 @@ public sealed partial class NativeJournalWindow
 
         mapClip = new ResNode { NodeFlags = NodeFlags.Clip | NodeFlags.Visible };
         mapClip.AttachNode(this);
+        // Fills whatever part of the view the map art doesn't cover (panned
+        // past the map's edge) with transparent black. Attached before the
+        // map content so it sits behind it.
+        mapBackdrop = new ImGuiImageNode { FitTexture = true };
+        mapBackdrop.LoadTexture(CreateBackdropTexture());
+        mapBackdrop.TextureSize = new Vector2(MapBorderTextureSize, MapBorderTextureSize);
+        mapBackdrop.AttachNode(mapClip);
         mapContent = new ResNode();
         mapContent.AttachNode(mapClip);
         mapImage = new ImGuiImageNode { Size = new Vector2(2048.0f, 2048.0f) };
@@ -238,28 +290,41 @@ public sealed partial class NativeJournalWindow
         // node's full Width/Height (AutoFit + Stretch wrap mode) - without
         // it the image draws at its native few-pixel size instead of filling
         // the line, which is why it first showed up as a row of dots.
+        // A layered bronze-and-gold frame instead of one flat line: each
+        // side stretches a small strip texture whose pixels run dark bronze ->
+        // gold -> bright gold -> gold -> dark bronze from the outer edge in.
         mapBorderTop = new ImGuiImageNode { FitTexture = true };
-        mapBorderTop.LoadTexture(CreateSolidGoldBorderTexture());
-        mapBorderTop.TextureSize = new Vector2(MapBorderTextureSize, MapBorderTextureSize);
+        mapBorderTop.LoadTexture(CreateBronzeBorderTexture(vertical: false, outerFirst: true));
+        mapBorderTop.TextureSize = new Vector2(MapBorderPatternSize, MapBorderPatternSize);
         mapBorderTop.AttachNode(this);
         mapBorderBottom = new ImGuiImageNode { FitTexture = true };
-        mapBorderBottom.LoadTexture(CreateSolidGoldBorderTexture());
-        mapBorderBottom.TextureSize = new Vector2(MapBorderTextureSize, MapBorderTextureSize);
+        mapBorderBottom.LoadTexture(CreateBronzeBorderTexture(vertical: false, outerFirst: false));
+        mapBorderBottom.TextureSize = new Vector2(MapBorderPatternSize, MapBorderPatternSize);
         mapBorderBottom.AttachNode(this);
         mapBorderLeft = new ImGuiImageNode { FitTexture = true };
-        mapBorderLeft.LoadTexture(CreateSolidGoldBorderTexture());
-        mapBorderLeft.TextureSize = new Vector2(MapBorderTextureSize, MapBorderTextureSize);
+        mapBorderLeft.LoadTexture(CreateBronzeBorderTexture(vertical: true, outerFirst: true));
+        mapBorderLeft.TextureSize = new Vector2(MapBorderPatternSize, MapBorderPatternSize);
         mapBorderLeft.AttachNode(this);
         mapBorderRight = new ImGuiImageNode { FitTexture = true };
-        mapBorderRight.LoadTexture(CreateSolidGoldBorderTexture());
-        mapBorderRight.TextureSize = new Vector2(MapBorderTextureSize, MapBorderTextureSize);
+        mapBorderRight.LoadTexture(CreateBronzeBorderTexture(vertical: true, outerFirst: false));
+        mapBorderRight.TextureSize = new Vector2(MapBorderPatternSize, MapBorderPatternSize);
         mapBorderRight.AttachNode(this);
 
         // A plain text button - the fish icon shipped with the plugin is
         // used for the map markers themselves (see RebuildMapMarkers), not
         // this button. Its actual label ("Show Map"/"Hide Map") is kept in
         // sync with mapPanelVisible from LayoutMapPanel.
-        mapToggleButton = new TextButtonNode { Size = new Vector2(MapToggleButtonWidth, MapToggleSize), OnClick = ToggleMapVisibility };
+        // An icon button (the game's "map window" toolbar glyph) in the footer
+        // row beside the normal-log and search buttons; its tooltip says whether
+        // it will show or hide the map (see LayoutMapPanel).
+        mapToggleButton = new TextureButtonNode
+        {
+            Size = new Vector2(CornerButtonSize, CornerButtonSize),
+            TexturePath = "ui/uld/AreaMap.tex",
+            TextureCoordinates = new Vector2(144.0f, 112.0f),
+            TextureSize = new Vector2(28.0f, 28.0f),
+            OnClick = ToggleMapVisibility,
+        };
         mapToggleButton.AttachNode(this);
     }
 
@@ -285,6 +350,49 @@ public sealed partial class NativeJournalWindow
         return Services.TextureProvider.CreateFromRaw(specification, pixels, "FishingCluesMapBorder");
     }
 
+    private const int MapBorderPatternSize = 6;
+    private static readonly (byte R, byte G, byte B)[] BronzeBorderRamp =
+    {
+        // Layered around #977645 (151, 118, 69): a darker outer edge, the
+        // base color, a lighter highlight in the middle, the base color again,
+        // and a darker inner edge.
+        (85, 64, 38), (151, 118, 69), (196, 160, 105), (222, 188, 132), (151, 118, 69), (85, 64, 38),
+    };
+
+    // One side of the border: MapBorderPatternSize pixels thick, colored from
+    // BronzeBorderRamp across that thickness (outer edge first, or last for
+    // the bottom/right sides), and constant along the line's length.
+    private static IDalamudTextureWrap CreateBronzeBorderTexture(bool vertical, bool outerFirst)
+    {
+        const int size = MapBorderPatternSize;
+        var specification = RawImageSpecification.Rgba32(size, size);
+        var pixels = new byte[size * size * 4];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                int across = vertical ? x : y;
+                var (r, g, b) = BronzeBorderRamp[outerFirst ? across : size - 1 - across];
+                int i = (y * size + x) * 4;
+                pixels[i + 0] = r;
+                pixels[i + 1] = g;
+                pixels[i + 2] = b;
+                pixels[i + 3] = 255;
+            }
+        }
+        return Services.TextureProvider.CreateFromRaw(specification, pixels, "FishingCluesMapBorder");
+    }
+
+    // Black at ~60% opacity - transparent enough for the window behind to
+    // show through, dark enough that the map's edge reads clearly.
+    private static IDalamudTextureWrap CreateBackdropTexture()
+    {
+        var specification = RawImageSpecification.Rgba32(MapBorderTextureSize, MapBorderTextureSize);
+        var pixels = new byte[MapBorderTextureSize * MapBorderTextureSize * 4];
+        for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 153;
+        return Services.TextureProvider.CreateFromRaw(specification, pixels, "FishingCluesMapBackdrop");
+    }
+
     private void ToggleMapVisibility()
     {
         mapPanelVisible = !mapPanelVisible;
@@ -299,11 +407,17 @@ public sealed partial class NativeJournalWindow
         // starts from the whole-area overview - resetting the zoom here
         // means it's never left showing wherever a previously clicked hole
         // happened to zoom in to.
+        // The zoom and pan are kept across hiding and showing the map (the
+        // fields are untouched while it's hidden), so it comes back exactly
+        // as it was left.
         if (mapPanelVisible)
         {
-            mapZoom = MinMapZoom;
-            if (mapArea is not null) ShowAreaMap(mapArea);
-            else RefreshMapPreview(previewArea);
+            if (mapArea is not null) ShowAreaMap(mapArea, preserveView: true);
+            else
+            {
+                mapZoom = MinMapZoom;
+                RefreshMapPreview(previewArea);
+            }
         }
         LayoutAttachedNodes();
     }
@@ -363,7 +477,7 @@ public sealed partial class NativeJournalWindow
     // around never yanks the map away from whatever hole is currently
     // shown. When focusSpot is given (the hole that was just clicked) the
     // map centers on it specifically instead of the area's default hole.
-    private void ShowAreaMap(JournalArea area, JournalSpot? focusSpot = null)
+    private void ShowAreaMap(JournalArea area, JournalSpot? focusSpot = null, bool zoomToSpot = false, bool preserveView = false)
     {
         bool areaChanged = !ReferenceEquals(mapArea, area);
         mapArea = area;
@@ -406,7 +520,41 @@ public sealed partial class NativeJournalWindow
         // texture's unused/blank margin below it instead of the map looking
         // centered the way the vanilla journal's own preview does.
         Vector2 defaultFocus = AreaFocusPixel(discoveredWithMap) ?? new Vector2(1024.0f, 1024.0f);
-        CenterMapOn(focusSpot?.MapPixelPosition ?? defaultFocus);
+        bool restoredView = false;
+        if (restoreMapView)
+        {
+            // Only the first area map shown after the window opens gets the
+            // saved view, and only if it is the same area it was saved for.
+            restoreMapView = false;
+            if (sessionState.MapArea == area.Name && sessionState.MapZoom > 0.0f)
+            {
+                mapZoom = Math.Clamp(sessionState.MapZoom, MinMapZoom, MaxMapZoom);
+                mapPanX = sessionState.MapPanX;
+                mapPanY = sessionState.MapPanY;
+                ClampMapPan();
+                restoredView = true;
+            }
+        }
+        if (!restoredView && preserveView)
+        {
+            // Re-showing the same map: keep the current zoom/pan, only
+            // re-clamping it in case the panel's size changed meanwhile.
+            ClampMapPan();
+        }
+        else if (!restoredView)
+        {
+            // Picking a hole from the fish-spot list zooms to fit that hole's
+            // whole range circle in view (zooming in for a small circle, out
+            // for a big one) instead of always zooming all the way in.
+            if (zoomToSpot && focusSpot?.MapPixelPosition is not null)
+            {
+                float viewSize = Math.Min(mapClip?.Width ?? EffectiveMapWidth(areaWidthSetting), mapClip?.Height ?? EffectiveMapHeight());
+                float circleOnScreenAtFit = MarkerCircleRawDiameter(focusSpot) * BaselineMapScale();
+                float wantedCircleSize = viewSize * MapCircleFitFraction;
+                mapZoom = Math.Clamp(wantedCircleSize / Math.Max(0.01f, circleOnScreenAtFit), MinMapZoom, MaxMapZoom);
+            }
+            CenterMapOn(focusSpot?.MapPixelPosition ?? defaultFocus);
+        }
         ApplyMapPan();
     }
 
@@ -480,12 +628,51 @@ public sealed partial class NativeJournalWindow
         _ = LoadMapTextureAsync(texturePath);
     }
 
+    // The game's own world map is two textures per map: "<id>m_m.tex" is the
+    // parchment sheet (paper grain, border and the zone-name banner) and
+    // "<id>_m.tex" is the terrain art, drawn over it multiplied. Showing
+    // "_m" alone (what this used to do) leaves out the paper, frame and
+    // banner and looks washed out. The two are multiplied together once
+    // here, off the game thread, into a single texture. Returns null (the
+    // caller falls back to plain "_m") when the paper layer doesn't exist or
+    // doesn't match in size, e.g. for a map that has no paper layer.
+    private static async System.Threading.Tasks.Task<IDalamudTextureWrap?> CreateMapCompositeAsync(string texturePath)
+    {
+        const string suffix = "_m.tex";
+        if (!texturePath.EndsWith(suffix, StringComparison.Ordinal)) return null;
+        string paperPath = texturePath[..^suffix.Length] + "m_m.tex";
+        if (!Services.DataManager.FileExists(paperPath)) return null;
+
+        (int Width, int Height, byte[] Pixels)? composite = await System.Threading.Tasks.Task.Run(() =>
+        {
+            var map = Services.DataManager.GetFile<Lumina.Data.Files.TexFile>(texturePath);
+            var paper = Services.DataManager.GetFile<Lumina.Data.Files.TexFile>(paperPath);
+            if (map is null || paper is null) return ((int, int, byte[])?)null;
+            int width = map.Header.Width, height = map.Header.Height;
+            if (paper.Header.Width != width || paper.Header.Height != height) return null;
+            byte[] top = map.ImageData, bottom = paper.ImageData;
+            var pixels = new byte[width * height * 4];
+            // Lumina's decoded image data is BGRA; the output is RGBA.
+            for (int i = 0; i < pixels.Length; i += 4)
+            {
+                pixels[i + 0] = (byte)(top[i + 2] * bottom[i + 2] / 255);
+                pixels[i + 1] = (byte)(top[i + 1] * bottom[i + 1] / 255);
+                pixels[i + 2] = (byte)(top[i + 0] * bottom[i + 0] / 255);
+                pixels[i + 3] = 255;
+            }
+            return (width, height, pixels);
+        });
+        if (composite is not var (w, h, data)) return null;
+        return await Services.TextureProvider.CreateFromRawAsync(RawImageSpecification.Rgba32(w, h), data, "FishingCluesMapComposite");
+    }
+
     private async System.Threading.Tasks.Task LoadMapTextureAsync(string texturePath)
     {
         IDalamudTextureWrap texture;
         try
         {
-            texture = await Services.TextureProvider.GetFromGame(texturePath).RentAsync();
+            texture = await CreateMapCompositeAsync(texturePath)
+                ?? await Services.TextureProvider.GetFromGame(texturePath).RentAsync();
         }
         catch (Exception ex)
         {
@@ -549,6 +736,7 @@ public sealed partial class NativeJournalWindow
             data.Circle.Dispose();
         }
         mapMarkers.Clear();
+        DisposeMarkerTooltips();
         // Callers only ever pass already-discovered spots (see ShowAreaMap) -
         // an undiscovered hole never gets a pin, since that would give away
         // exactly where it sits before the player has found it themselves.
@@ -567,11 +755,31 @@ public sealed partial class NativeJournalWindow
             {
                 Size = new Vector2(MapMarkerSize, MapMarkerSize),
                 FitTexture = true,
-                TextTooltip = spot.Name,
+                // Stays transparent until its texture arrives (see
+                // LoadMarkerIconAsync) - an empty image node draws as a black
+                // square.
+                Alpha = 0.0f,
             };
             icon.AttachNode(mapClip);
             mapMarkers.Add(icon, (spot, circle));
             _ = LoadMarkerIconAsync(icon);
+        }
+        CreatePlayerMarker();
+        // Created after the icons so they are drawn on top of them.
+        foreach (var (icon, data) in mapMarkers)
+        {
+            var tooltip = new BackgroundTextNode
+            {
+                FontType = FontType.Axis,
+                FontSize = 14,
+                Size = new Vector2(200.0f, 24.0f),
+                String = data.Spot.Name,
+                IsVisible = false,
+                Alpha = 0.0f,
+                Position = new Vector2(-10000.0f, -10000.0f),
+            };
+            tooltip.AttachNode(mapClip);
+            markerTooltips.Add(icon, tooltip);
         }
         Services.Log.Debug($"[FishingClues] Area map: placed {mapMarkers.Count} marker(s) for '{mapArea?.Name}'");
         UpdateMarkerLayout();
@@ -605,6 +813,7 @@ public sealed partial class NativeJournalWindow
                 return;
             }
             icon.LoadTexture(texture);
+            icon.Alpha = 1.0f;
         });
     }
 
@@ -709,6 +918,259 @@ public sealed partial class NativeJournalWindow
                     + $"clip={clipWidth}x{clipHeight} scale={scale} iconVisible={icon.IsVisible} circleVisible={circleVisible}");
             }
         }
+        // Same pass as the icons, so the player marker moves in the very
+        // frame the map pans instead of trailing it by one.
+        unsafe { UpdatePlayerMarker(); }
+        RefreshMarkerTooltip();
+    }
+
+    // Re-anchors the shared tooltip to the hovered marker's icon (centered
+    // above it, or below it when there's no room above, and kept inside the
+    // map view). Called on every hover change and from UpdateMarkerLayout, so
+    // it also follows the marker while the map is panned or zoomed.
+    private void RefreshMarkerTooltip()
+    {
+        if (mapClip is null) return;
+        // Every marker owns its own pre-rendered tooltip node (created in
+        // RebuildMapMarkers), so hovering another marker only hides one node
+        // and shows another - swapping one shared node's text on screen
+        // flashed the previous name for a frame, because the native text
+        // node re-renders a changed string a frame late.
+        foreach (var (icon, tip) in markerTooltips)
+            if (!ReferenceEquals(icon, hoveredMarker) && (tip.IsVisible || tip.Alpha > 0.0f))
+            {
+                // Hidden three ways at once (invisible, transparent and moved
+                // far off the map) so the previous tooltip can't linger for a
+                // frame if the game applies one of them late.
+                tip.IsVisible = false;
+                tip.Alpha = 0.0f;
+                tip.Position = new Vector2(-10000.0f, -10000.0f);
+            }
+        if (hoveredMarker is null || !hoveredMarker.IsVisible || !markerTooltips.TryGetValue(hoveredMarker, out var tooltip))
+            return;
+        // Sized in the background while hidden (MeasurePendingTooltips) so
+        // that resizing never happens on the frame it first appears.
+        if (!measuredTooltips.Contains(tooltip)) return;
+        Vector2 size = tooltip.Size;
+        Vector2 iconPos = hoveredMarker.Position;
+        float x = iconPos.X + MapMarkerSize / 2.0f - size.X / 2.0f;
+        float y = iconPos.Y - size.Y - 2.0f;
+        if (y < 0.0f) y = iconPos.Y + MapMarkerSize + 2.0f;
+        x = Math.Clamp(x, 0.0f, Math.Max(0.0f, mapClip.Width - size.X));
+        tooltip.Position = new Vector2(x, y);
+        tooltip.Alpha = 1.0f;
+        tooltip.IsVisible = true;
+    }
+
+    // Called every frame: gives each still-hidden tooltip its final size once
+    // its text can be measured, a few frames after it was created.
+    private void MeasurePendingTooltips()
+    {
+        if (measuredTooltips.Count >= markerTooltips.Count) return;
+        foreach (var tip in markerTooltips.Values)
+        {
+            if (measuredTooltips.Contains(tip)) continue;
+            Vector2 text = tip.TextNode.GetTextDrawSize(false);
+            if (text.X < 1.0f) continue;
+            tip.Size = new Vector2(text.X + 20.0f, Math.Max(text.Y + 8.0f, 24.0f));
+            measuredTooltips.Add(tip);
+        }
+    }
+
+    private void CreatePlayerMarker()
+    {
+        if (mapClip is null) return;
+        // Cone first so the drop draws on top of it.
+        playerCone = new ImGuiImageNode
+        {
+            Size = new Vector2(MapPlayerConeSize, MapPlayerConeSize),
+            FitTexture = true,
+            Origin = MapPlayerConeOrigin,
+            // Transparent until the sprite arrives (an empty image node draws
+            // as a black square).
+            Alpha = 0.0f,
+            IsVisible = false,
+        };
+        playerCone.AttachNode(mapClip);
+        _ = LoadPlayerConeAsync(playerCone);
+        playerMarker = new ImGuiImageNode
+        {
+            Size = new Vector2(MapPlayerIconSize, MapPlayerIconSize),
+            FitTexture = true,
+            Origin = MapPlayerIconPivot,
+            // Transparent until its texture arrives (an empty image node
+            // draws as a black square).
+            Alpha = 0.0f,
+            IsVisible = false,
+        };
+        playerMarker.AttachNode(mapClip);
+        _ = LoadPlayerMarkerIconAsync(playerMarker);
+    }
+
+    private async System.Threading.Tasks.Task LoadPlayerMarkerIconAsync(ImGuiImageNode node)
+    {
+        IDalamudTextureWrap texture;
+        try
+        {
+            texture = await Services.TextureProvider.GetFromGameIcon(MapPlayerIconId).RentAsync();
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Warning(ex, "[FishingClues] Area map: failed to load the player marker icon.");
+            return;
+        }
+        await Services.Framework.Run(() =>
+        {
+            if (!ReferenceEquals(node, playerMarker))
+            {
+                texture.Dispose();
+                return;
+            }
+            node.LoadTexture(texture);
+            node.Alpha = 1.0f;
+        });
+    }
+
+    // The game's own camera cone: the 96x96 sprite at (352,0) of
+    // ui/uld/NaviMap.tex, i.e. the 192x192 block at (704,0) of its high-res
+    // sheet NaviMap_hr1.tex (read straight from the game data and cropped
+    // here). It is a soft fan glow whose bright corner sits at the player.
+    private const string MapConeSheetPath = "ui/uld/NaviMap_hr1.tex";
+    private const int MapConeSheetX = 704;
+    private const int MapConeSheetSize = 192;
+
+    private async System.Threading.Tasks.Task LoadPlayerConeAsync(ImGuiImageNode node)
+    {
+        IDalamudTextureWrap texture;
+        try
+        {
+            var pixels = await System.Threading.Tasks.Task.Run(() =>
+            {
+                var sheet = Services.DataManager.GetFile<Lumina.Data.Files.TexFile>(MapConeSheetPath);
+                if (sheet is null) return null;
+                int width = sheet.Header.Width;
+                byte[] source = sheet.ImageData;
+                var crop = new byte[MapConeSheetSize * MapConeSheetSize * 4];
+                for (int y = 0; y < MapConeSheetSize; y++)
+                {
+                    for (int x = 0; x < MapConeSheetSize; x++)
+                    {
+                        int from = (y * width + MapConeSheetX + x) * 4;
+                        int to = (y * MapConeSheetSize + x) * 4;
+                        // Lumina's image data is BGRA; the texture is RGBA.
+                        crop[to + 0] = source[from + 2];
+                        crop[to + 1] = source[from + 1];
+                        crop[to + 2] = source[from + 0];
+                        crop[to + 3] = source[from + 3];
+                    }
+                }
+                return crop;
+            });
+            if (pixels is null) return;
+            texture = await Services.TextureProvider.CreateFromRawAsync(
+                RawImageSpecification.Rgba32(MapConeSheetSize, MapConeSheetSize), pixels, "FishingCluesMapPlayerCone");
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Warning(ex, "[FishingClues] Area map: failed to load the camera cone sprite.");
+            return;
+        }
+        await Services.Framework.Run(() =>
+        {
+            if (!ReferenceEquals(node, playerCone))
+            {
+                texture.Dispose();
+                return;
+            }
+            node.LoadTexture(texture);
+            node.TextureSize = new Vector2(MapConeSheetSize, MapConeSheetSize);
+            node.Alpha = 1.0f;
+        });
+    }
+
+    // Places the player marker and camera cone on the map: the player's world
+    // position converted to the map texture's pixel space with the map's own
+    // SizeFactor/Offset, then to a screen position in mapClip's unscaled
+    // space (so neither shrinks when the map zooms out). Shown only while
+    // the player is standing in the territory whose map is displayed.
+    private unsafe void UpdatePlayerMarker()
+    {
+        if (playerMarker is null || playerCone is null || mapClip is null) return;
+        var player = Services.ObjectTable.LocalPlayer;
+        uint territory = Services.ClientState.TerritoryType;
+        if (player is null || mapArea is null || mapArea.Spots.Count == 0 || mapArea.Spots[0].TerritoryId != territory)
+        {
+            playerMarker.IsVisible = playerCone.IsVisible = false;
+            return;
+        }
+        if (ResolvePlayerMapInfo(territory) is not var (mapScale, offsetX, offsetY))
+        {
+            playerMarker.IsVisible = playerCone.IsVisible = false;
+            return;
+        }
+        Vector2 pixel = new((player.Position.X + offsetX) * mapScale + 1024.0f, (player.Position.Z + offsetY) * mapScale + 1024.0f);
+        Vector2 local = (pixel - new Vector2(mapPanX, mapPanY)) * MapScale();
+        bool visible = local.X >= -MapPlayerConeSize && local.Y >= -MapPlayerConeSize
+            && local.X <= mapClip.Width + MapPlayerConeSize && local.Y <= mapClip.Height + MapPlayerConeSize;
+        playerMarker.IsVisible = playerCone.IsVisible = visible;
+        if (!visible) return;
+
+        // Facing angle (radians) -> clockwise node rotation with the icon/cone
+        // drawn pointing up (north): the game's heading 0 faces +Z (south).
+        playerMarker.Position = local - MapPlayerIconPivot;
+        playerMarker.Rotation = MapRotationSign * (MathF.PI - player.Rotation);
+        playerCone.Position = local - MapPlayerConeOrigin;
+        var camera = FFXIVClientStructs.FFXIV.Client.Game.Control.CameraManager.Instance();
+        var active = camera is null ? null : camera->GetActiveCamera();
+        playerCone.IsVisible = active is not null;
+        if (active is not null) playerCone.Rotation = MapRotationSign * -active->DirH - MapPlayerConeBaseAngle;
+    }
+
+    // The territory's map scale and offsets (cached for the last territory
+    // asked about), for converting a world position to map-texture pixels:
+    // pixel = (world + offset) * scale + 1024. Null when it has no usable map.
+    private (float Scale, float OffsetX, float OffsetY)? ResolvePlayerMapInfo(uint territory)
+    {
+        if (playerMapTerritory != territory)
+        {
+            playerMapTerritory = territory;
+            playerMapInfo = null;
+            if (Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().TryGetRow(territory, out var row)
+                && row.Map.ValueNullable is { } map && map.SizeFactor != 0)
+                playerMapInfo = (map.SizeFactor / 100.0f, map.OffsetX, map.OffsetY);
+        }
+        return playerMapInfo;
+    }
+
+    private void DisposePlayerMarker()
+    {
+        playerCone?.Dispose();
+        playerMarker?.Dispose();
+        playerCone = null;
+        playerMarker = null;
+    }
+
+    private void DisposeMarkerTooltips()
+    {
+        DisposePlayerMarker();
+        foreach (var tip in markerTooltips.Values) tip.Dispose();
+        markerTooltips.Clear();
+        measuredTooltips.Clear();
+        hoveredMarker = null;
+    }
+
+    private ImGuiImageNode? MarkerAt(CursorInputData mouse, float scale)
+    {
+        foreach (var (icon, _) in mapMarkers)
+        {
+            if (!icon.IsVisible) continue;
+            Vector2 position = icon.ScreenPosition;
+            Vector2 size = icon.Size * scale;
+            if (mouse.PositionX >= position.X && mouse.PositionX <= position.X + size.X
+                && mouse.PositionY >= position.Y && mouse.PositionY <= position.Y + size.Y)
+                return icon;
+        }
+        return null;
     }
 
     private void CenterMapOn(Vector2 focusPixel)
@@ -775,7 +1237,7 @@ public sealed partial class NativeJournalWindow
     // over the marker just clicked - SelectSpot is called again afterward so
     // the click always wins. SelectSpot itself updates the map to focus this
     // spot, so there's no separate ShowAreaMap call needed here.
-    private void NavigateToSpot(JournalSpot spot)
+    private void NavigateToSpot(JournalSpot spot, bool zoomToSpot = false)
     {
         if (!spot.IsUnlocked) return;
         JournalRegion? region = regions.FirstOrDefault(r => r.Areas.Any(a => a.Spots.Any(s => s.Id == spot.Id)));
@@ -786,19 +1248,31 @@ public sealed partial class NativeJournalWindow
             sessionState.SelectedSpot = spot.Id;
             SelectRegion(region, forceOpenArea: area, forceSelectSpot: spot);
         }
-        SelectSpot(spot);
+        SelectSpot(spot, zoomToSpot);
     }
 
     // Where the "Map" toggle sits at the bottom of the region list, in the
     // same row as (and mirrored from) the normal-log/guide buttons on the
     // opposite side of that row - not attached to the map panel at all
     // anymore, so it stays reachable even while the panel is collapsed.
+    // The two buttons in the region column's bottom right corner (this map
+    // toggle and the locate button just left of it, see
+    // NativeJournalWindow.Locate.cs). Their 28px sprites have ~5px of clear
+    // padding around a ~17px gold button, so to sit as a snug pair the boxes
+    // overlap by 8px (a 3px gap between the visible buttons) and the pair is
+    // pushed 3px past the column's right edge (leaving ~7px of visible margin
+    // before the divider).
+    private const float CornerButtonSize = 28.0f;
+    private const float CornerButtonGap = -8.0f;
+    private const float CornerButtonRightOverhang = 3.0f;
+
     private Vector2 MapButtonPosition()
     {
         float regionWidth = Math.Clamp(regionWidthSetting, 130.0f, 280.0f);
-        return new Vector2(
-            regionWidth - 22.0f - MapToggleButtonWidth + MapButtonOffsetX,
-            Size.Y - 56.0f + MapButtonOffsetY);
+        // The region column starts at contentOrigin.X in window coordinates, so
+        // its right edge (where the divider sits, 5px further on) is at
+        // contentOrigin.X + regionWidth.
+        return new Vector2(contentOrigin.X + regionWidth + CornerButtonRightOverhang - CornerButtonSize, FooterPosition.Y + (28.0f - CornerButtonSize) / 2.0f);
     }
 
     private void LayoutMapPanel()
@@ -810,7 +1284,7 @@ public sealed partial class NativeJournalWindow
         {
             mapToggleButton.IsVisible = !GuideMode && configuration.ShowAreaLocationMap;
             mapToggleButton.Position = MapButtonPosition();
-            mapToggleButton.String = mapPanelVisible ? "Hide Map" : "Show Map";
+            mapToggleButton.TextTooltip = mapPanelVisible ? "Hide the area map" : "Show the area map";
         }
         bool mapOn = MapEnabled;
         if (mapCaptionDivider is not null) mapCaptionDivider.IsVisible = mapOn;
@@ -875,6 +1349,7 @@ public sealed partial class NativeJournalWindow
         {
             mapClip.Position = contentOrigin + new Vector2(areaX, captionTop + MapCaptionHeight - MapPanelSpacing) + mapImageOffset;
             mapClip.Size = new Vector2(mapWidth, mapHeight);
+            if (mapBackdrop is not null) mapBackdrop.Size = new Vector2(mapWidth, mapHeight);
         }
 
         // A simple gold frame around the clip rect, standing in for the
@@ -942,6 +1417,8 @@ public sealed partial class NativeJournalWindow
     private unsafe void UpdateMapInteraction(AtkUnitBase* addon, CursorInputData mouse, AtkStage* stage)
     {
         if (mapClip is null || mapContent is null || !MapEnabled || GuideMode) return;
+        MeasurePendingTooltips();
+        UpdatePlayerMarker();
         float scale = Math.Max(0.1f, addon->Scale);
         bool overAddon = stage != null && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon;
 
@@ -958,17 +1435,9 @@ public sealed partial class NativeJournalWindow
             float deltaScreenY = mouse.PositionY - mapDragStartMouseY;
             bool wasAlreadyDragging = mapDragDistance >= 4.0f;
             mapDragDistance = Math.Max(mapDragDistance, Math.Max(Math.Abs(deltaScreenX), Math.Abs(deltaScreenY)));
-            // A marker's tooltip is shown from the native hover (MouseOver/
-            // MouseOut) system, which stops re-evaluating which node the
-            // cursor is over while a mouse button is held - so once a drag
-            // that started on a marker turns into an actual pan (not just a
-            // click) rather than the marker's tooltip following the cursor,
-            // it was getting left behind exactly where it was first shown.
-            // Hiding it right as the drag crosses the click threshold (not
-            // on every held-down frame, and not on a plain click) clears it
-            // the moment it would otherwise start looking stuck, without
-            // flickering it on/off for a simple click-to-navigate.
-            if (mapDragDistance >= 4.0f && !wasAlreadyDragging) mapClip?.HideTooltip();
+            // hoveredMarker is left as it was when the drag started, so the
+            // tooltip stays attached to that marker as the map pans (it is
+            // re-anchored in ApplyMapPan -> UpdateMarkerLayout below).
             float contentScale = MapScale();
             mapPanX = mapDragStartPanX - deltaScreenX / (scale * contentScale);
             mapPanY = mapDragStartPanY - deltaScreenY / (scale * contentScale);
@@ -977,12 +1446,23 @@ public sealed partial class NativeJournalWindow
             return;
         }
 
-        if (!overAddon) return;
+        if (!overAddon)
+        {
+            if (hoveredMarker is not null) { hoveredMarker = null; RefreshMarkerTooltip(); }
+            return;
+        }
 
         Vector2 origin = mapClip.ScreenPosition;
         float localX = (mouse.PositionX - origin.X) / scale;
         float localY = (mouse.PositionY - origin.Y) / scale;
         bool overMap = localX >= 0 && localY >= 0 && localX < mapClip.Width && localY < mapClip.Height;
+
+        ImGuiImageNode? hovered = overMap ? MarkerAt(mouse, scale) : null;
+        if (!ReferenceEquals(hovered, hoveredMarker))
+        {
+            hoveredMarker = hovered;
+            RefreshMarkerTooltip();
+        }
 
         if (overMap && mouse.MouseWheel != 0)
         {
@@ -1040,7 +1520,9 @@ public sealed partial class NativeJournalWindow
             data.Circle.Dispose();
         }
         mapMarkers.Clear();
+        DisposeMarkerTooltips();
         mapImage = null;
+        mapBackdrop = null;
         mapContent = null;
         mapClip = null;
         mapCaptionDivider = null;

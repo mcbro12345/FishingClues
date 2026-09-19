@@ -179,7 +179,7 @@ public sealed partial class NativeJournalWindow
                     {
                         Height = 25.0f,
                         String = $"  {spot.Name}",
-                        OnClick = () => SelectSpot(captured),
+                        OnClick = () => SelectSpot(captured, zoomToSpot: true),
                     };
                     spotButtons.Add(spotButton, spot.Id);
                     areaDropDown.AddNode(spotButton);
@@ -245,7 +245,7 @@ public sealed partial class NativeJournalWindow
         fishList?.ContentNode.Clear();
     }
 
-    private void SelectSpot(JournalSpot spot)
+    private void SelectSpot(JournalSpot spot, bool zoomToSpot = false)
     {
         ClearDetails();
         selectedSpot = spot;
@@ -260,7 +260,7 @@ public sealed partial class NativeJournalWindow
         // Clicking a fishing hole is the one action that's allowed to change
         // the map - it always jumps to and centers on the hole just clicked.
         JournalArea? spotArea = selectedRegion?.Areas.FirstOrDefault(a => a.Name == spot.Area);
-        if (spotArea is not null) ShowAreaMap(spotArea, spot);
+        if (spotArea is not null) ShowAreaMap(spotArea, spot, zoomToSpot);
         if (fishList is null)
             return;
 

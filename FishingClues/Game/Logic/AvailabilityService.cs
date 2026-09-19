@@ -64,32 +64,55 @@ public sealed class AvailabilityService
             return prevWeatherGated ? $"{current} after {formatter.FormatWeather(condition.PreviousWeather, "any weather")}" : current;
         }
 
+        // Every wording below is built from up to two noun phrases:
+        //   time    - "9:00pm-3:00am ET"
+        //   weather - "Rain / Showers", "Rain after Fog", "any weather after Fog"
+        // and the gates that exist give exactly these cases (both for "available"
+        // and "waiting"): time only, weather only, or weather with a time window.
+        //   Available during the 9:00pm-3:00am ET window.
+        //   Available with Rain / Showers.
+        //   Available with Rain after Fog during a 9:00pm-3:00am ET window.
+        //   Waiting for the 9:00pm-3:00am ET window.
+        //   Waiting for Rain / Showers.
+        //   Waiting for Rain after Fog during a 9:00pm-3:00am ET window.
+        string? timeText = timeGated ? formatter.FormatTime(condition.StartHour, condition.EndHour) : null;
+        string? weatherText = WeatherClause();
+
         if (timeOk && weatherOk && prevOk)
         {
-            var met = new List<string>();
-            if (timeGated) met.Add(formatter.FormatTime(condition.StartHour, condition.EndHour));
-            if (WeatherClause() is string metWeather) met.Add(metWeather);
-            string availableTooltip = met.Count == 0 ? "Now available." : $"Now available due to {string.Join(" and ", met)}.";
+            string availableTooltip = (timeText, weatherText) switch
+            {
+                (string t, string w) => $"Available with {w} during a {t} window.",
+                (string t, null) => $"Available during the {t} window.",
+                (null, string w) => $"Available with {w}.",
+                _ => "Available now.",
+            };
 
             if (configuration.DisableAvailabilityCountdown)
                 return new FishAvailabilityInfo(true, availableTooltip, availableTooltip);
 
             long? end = FindAvailabilityEnd(condition, weatherRateId, weatherGated, prevWeatherGated, timeGated, now);
-            string availableCountdown = end is long endTime ? FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, endTime - now))) : "Up now";
+            string availableCountdown = end is long endTime
+                ? $"Ends in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, endTime - now)))}"
+                : "Not ending soon";
             return new FishAvailabilityInfo(true, $"{availableCountdown} | {availableTooltip}", availableTooltip);
         }
 
-        var waitingFor = new List<string>();
-        if (timeGated) waitingFor.Add(formatter.FormatTime(condition.StartHour, condition.EndHour));
-        if (WeatherClause() is string waitingWeather) waitingFor.Add(waitingWeather);
-        string waitingText = waitingFor.Count == 0 ? "conditions to line up" : string.Join(" and ", waitingFor);
-        string tooltip = $"Waiting for {waitingText}.";
+        string tooltip = (timeText, weatherText) switch
+        {
+            (string t, string w) => $"Waiting for {w} during a {t} window.",
+            (string t, null) => $"Waiting for the {t} window.",
+            (null, string w) => $"Waiting for {w}.",
+            _ => "Waiting for conditions to line up.",
+        };
 
         if (configuration.DisableAvailabilityCountdown)
             return new FishAvailabilityInfo(false, tooltip, tooltip);
 
         long? next = FindNextAvailability(condition, weatherRateId, weatherGated, prevWeatherGated, now);
-        string waitingCountdown = next is long nextTime ? FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, nextTime - now))) : "Not soon";
+        string waitingCountdown = next is long nextTime
+            ? $"Starts in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, nextTime - now)))}"
+            : "Not starting soon";
         return new FishAvailabilityInfo(false, $"{waitingCountdown} | {tooltip}", tooltip);
     }
 
@@ -219,10 +242,12 @@ public sealed class AvailabilityService
 
     private static string FormatCountdown(TimeSpan span)
     {
+        // Read after "Ends in" / "Starts in": "under a minute", "39m", "2h",
+        // "1h 53m", "3d", "2d 4h" - a zero trailing unit is dropped.
         if (span.TotalMinutes < 1) return "under a minute";
         if (span.TotalHours < 1) return $"{span.Minutes}m";
-        if (span.TotalDays < 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
-        return $"{(int)span.TotalDays}d {span.Hours}h";
+        if (span.TotalDays < 1) return span.Minutes == 0 ? $"{(int)span.TotalHours}h" : $"{(int)span.TotalHours}h {span.Minutes}m";
+        return span.Hours == 0 ? $"{(int)span.TotalDays}d" : $"{(int)span.TotalDays}d {span.Hours}h";
     }
 
 }

@@ -20,9 +20,51 @@ namespace FishingClues.UI.Windows;
 public sealed partial class NativeJournalWindow
 {
     private FishEntryRowNode? partialHover;
+    // The manually highlighted, partly clipped area-list hole row (its native
+    // hover never fires, so its highlight has to be cleared by hand too).
+    private ListButtonNode? partialAreaHover;
+
+    // A row that is only partly inside its list's clip region gets the native
+    // mouse-over (highlight on) but never the mouse-out, so its highlight
+    // stays lit after the cursor leaves. Every frame, drop the highlight on
+    // all such rows; the manual hover pass below re-lights the one that is
+    // really under the cursor.
+    private void ClearClippedHoverHighlights()
+    {
+        if (areaList is not null)
+        {
+            float offset = areaList.ScrollBarNode.ScrollPosition;
+            foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
+            {
+                float headerTop = header.Y - offset;
+                // The header's own title strip (28px) - lit by hand below when
+                // it is partly clipped, so it has to be un-lit by hand too.
+                if (headerTop < 0 || headerTop + 28.0f > areaList.Height) header.HeaderTextureNode.AddColor = System.Numerics.Vector3.Zero;
+                if (header.IsCollapsed) continue;
+                foreach (var spotButton in header.GetNodes<ListButtonNode>())
+                {
+                    float top = headerTop + spotButton.Y;
+                    if (top < 0 || top + spotButton.Height > areaList.Height) spotButton.HoverBackgroundNode.Alpha = 0;
+                }
+            }
+        }
+        if (fishList is not null)
+        {
+            float offset = fishList.ScrollBarNode.ScrollPosition;
+            foreach (var row in fishButtons.Keys)
+            {
+                float top = row.Y - offset;
+                if (top < 0 || top + row.Height > fishList.Height) row.HoverBackgroundNode.Alpha = 0;
+            }
+        }
+    }
 
     protected override unsafe void OnDraw(AtkUnitBase* addon)
     {
+        if (partialAreaHover is not null && spotButtons.ContainsKey(partialAreaHover)) partialAreaHover.HoverBackgroundNode.Alpha = 0;
+        partialAreaHover = null;
+        ClearClippedHoverHighlights();
+        UpdateLocateButton();
         var previousPartialHover = partialHover;
         if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HoverBackgroundNode.Alpha = 0;
         partialHover = null;
@@ -99,10 +141,6 @@ public sealed partial class NativeJournalWindow
                 }
             }
         }
-        if (!ReferenceEquals(previousPartialHover, partialHover)) {
-            if (previousPartialHover is not null && fishButtons.ContainsKey(previousPartialHover)) previousPartialHover.HideTooltip();
-            partialHover?.ShowTooltip();
-        }
         // Same native quirk as the fishList block above (a button whose own
         // bounds are only partially inside its scrolling clip region never
         // receives the click at all), applied to the area list - which
@@ -153,6 +191,9 @@ public sealed partial class NativeJournalWindow
                     {
                         if (areaY >= Math.Max(0, headerTop) && areaY < Math.Min(areaList.Height, headerTitleBottom))
                         {
+                            // Same +16 add-color the header's own hover animation
+                            // applies.
+                            header.HeaderTextureNode.AddColor = new System.Numerics.Vector3(16.0f / 255.0f);
                             addonEvents.SetCursor(AddonCursorType.Clickable);
                             ownsResizeCursor = true;
                             if (areaClicked && header.IsCollapsed) header.IsCollapsed = false;
@@ -170,6 +211,7 @@ public sealed partial class NativeJournalWindow
                         if (spotPartial && areaY >= Math.Max(0, spotTop) && areaY < Math.Min(areaList.Height, spotBottom))
                         {
                             spotButton.HoverBackgroundNode.Alpha = 1;
+                            partialAreaHover = spotButton;
                             addonEvents.SetCursor(AddonCursorType.Clickable);
                             ownsResizeCursor = true;
                             if (areaClicked)
@@ -282,6 +324,8 @@ public sealed partial class NativeJournalWindow
         regionHeader = null;
         areaHeader = null;
         fishHeader = null;
+        locateButton = null;
+        currentHole = null;
         spotTitle = null;
         spotSummary = null;
         summaryDivider = null;
@@ -299,6 +343,8 @@ public sealed partial class NativeJournalWindow
     {
         if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HideTooltip();
         partialHover = null;
+        if (partialAreaHover is not null && spotButtons.ContainsKey(partialAreaHover)) partialAreaHover.HoverBackgroundNode.Alpha = 0;
+        partialAreaHover = null;
         ReleaseResizeCursor();
         if (draggingDivider) { draggingDivider = false; saveDivider(); }
         SaveViewState();
@@ -319,6 +365,13 @@ public sealed partial class NativeJournalWindow
         sessionState.AreaScroll = areaList?.ScrollBarNode.ScrollPosition ?? 0;
         sessionState.FishScroll = fishList.ScrollBarNode.ScrollPosition;
         sessionState.DetailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
+        if (mapArea is not null && !restoreMapView)
+        {
+            sessionState.MapArea = mapArea.Name;
+            sessionState.MapZoom = mapZoom;
+            sessionState.MapPanX = mapPanX;
+            sessionState.MapPanY = mapPanY;
+        }
         if (!GuideMode && selectedRegion is not null)
             sessionState.Regions[selectedRegion.Name] = new RegionViewState(selectedSpot?.Id ?? 0, selectedFish,
                 sessionState.AreaScroll, sessionState.FishScroll, sessionState.DetailsScroll);
