@@ -1,12 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.IO;
-using System.Numerics;
-using Dalamud.Game.Addon.Events;
-using Dalamud.Plugin.Services;
-using FFXIVClientStructs.FFXIV.Client.System.Framework;
-using FFXIVClientStructs.FFXIV.Client.System.Input;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using KamiToolKit.BaseTypes;
 using KamiToolKit.Nodes;
@@ -16,12 +10,30 @@ using FishingClues.UI.Components;
 
 namespace FishingClues.UI.Windows;
 
+// The fish details panel. Like the fish list, it is described as items and matched
+// onto the nodes already there, so switching fish reuses them instead of replacing
+// them (a node that has just been created draws blank for a frame).
 public sealed partial class NativeJournalWindow
 {
-    private JournalListNode? catchBody;
-    // Minimum height of a plain (unlabelled) line of details text.
     private const float TightLineHeight = 18.0f;
+    private const float HeadingHeight = 24.0f;
+    private const uint HeadingFontSize = 16;
+
+    private abstract record DetailItem;
+    private sealed record DetailLabel(string Text, uint FontSize, FontType? Font) : DetailItem;
+    private sealed record DetailRow(string Text, uint FontSize, FontType? Font) : DetailItem;
+    private sealed record DetailSelector : DetailItem;
+    private sealed record DetailBody : DetailItem;
+
+    // The panel's own items, and those of the body under the name (which is refilled alone
+    // when the guide's location changes).
+    private readonly List<DetailItem> detailItems = new();
+    private readonly List<DetailItem> bodyItems = new();
+    private JournalListNode? catchBody;
     private bool writingCatchBody;
+
+    // The details panel is open while a fish is selected.
+    private bool DetailsOpen => selectedDetails is not null;
 
     private void ClearDetails()
     {
@@ -32,73 +44,173 @@ public sealed partial class NativeJournalWindow
         selectedDetails = null;
         selectedGuide = null;
         guideLocation = null;
-        guidePole = null;
-        guideDetailsPending = guideLocationPending = false;
+        guideDetailsPending = false;
         selectedFish = 0;
         detailsList?.ContentNode.Clear();
         detailsList?.RecalculateSizes();
         UpdateDetailsHint();
+        SyncDetailsLayout();
     }
 
     private void RenderDetails()
     {
         if (detailsList is null) return;
-        catchBody = null;
-        detailsList.ContentNode.Clear();
-        if (selectedGuide is not null) {
-            RenderGuideDetails();
+        detailItems.Clear();
+        bodyItems.Clear();
+        detailsList.ContentNode.FirstItemSpacing = 0.0f;
+        if (selectedGuide is not null)
+        {
+            // The name is in the same font and size as the Region / Area / Fish headings. It is always
+            // a link-style row (plain text when the fish is unknown), so the layout is the same for
+            // known and unknown fish and switching between them reuses the same nodes.
+            AddDetailLine(UnknownFishName(selectedGuide.Name), HeadingFontSize, FontType.Jupiter, forceRow: true);
+            if (GuideMode) detailItems.Add(new DetailSelector());
+            detailItems.Add(new DetailBody());
+            BuildBodyItems();
         }
         else if (selectedDetails is { } section)
         {
-            // no headroom needed above a plain heading (only the big guide name has it)
-            detailsList.ContentNode.FirstItemSpacing = 0.0f;
-            string heading = section.Heading == "????" && unknownFishNumbers.TryGetValue(selectedFish, out int number)
-                ? $"Unknown Fish #{number}"
-                : section.Heading;
-            AddDetailLine(heading);
+            AddDetailLine(UnknownFishName(section.Heading));
             foreach (string line in section.Lines) AddDetailLine(line);
         }
+        ApplyDetailItems(detailsList.ContentNode, detailItems);
+        catchBody = detailsList.ContentNode.GetNodes<JournalListNode>().FirstOrDefault();
+        ApplyBodyItems();
         detailsList.RecalculateSizes();
         UpdateDetailsHint();
+        SyncDetailsLayout();
     }
 
-    private void RenderGuideDetails()
-    {
-        if (detailsList is null || selectedGuide is null) return;
-        // an undiscovered fish is headed "Unknown Fish #N", numbered like its list entry
-        string name = !GuideMode && unknownFishNumbers.TryGetValue(selectedFish, out int unknownNumber)
-            ? $"Unknown Fish {unknownNumber}" // this font draws '#' as a numero sign, so no symbol
-            : selectedGuide.Name;
-        // the big name's own box already carries headroom (see AddDetailLine), so the
-        // list adds none above it
-        detailsList.ContentNode.FirstItemSpacing = 0.0f;
-        // the fish's name, in the same font and size as the Region / Area / Fish headings
-        AddDetailLine(name, 16, FontType.Jupiter);
-        if (GuideMode) detailsList.ContentNode.AddNode(new DetailSelectorRow<GuideLocation>(
-            "Locations:", selectedGuide.Locations, guideLocation, l => l.Label,
-            l => { guideLocation = l; guideLocationPending = guideDetailsPending = true; }, "Unknown") { Width = Math.Max(80, detailsList.Width - 24) });
-        catchBody = new JournalListNode { Width = Math.Max(80, detailsList.Width - 24), FitContents = true };
-        detailsList.ContentNode.AddNode(catchBody);
-        RenderCatchBody();
-    }
-
+    // Refills just the part under the name, for a change of location in the guide.
     private void RenderCatchBody()
     {
         if (catchBody is null || selectedGuide is null) return;
-        catchBody.Clear();
+        bodyItems.Clear();
+        BuildBodyItems();
+        ApplyBodyItems();
+        detailsList?.RecalculateSizes();
+    }
+
+    private void BuildBodyItems()
+    {
+        if (selectedGuide is null) return;
         writingCatchBody = true;
         if (guideLocation is not null)
-            foreach (string line in selectedGuide.GetDetails(guideLocation, guidePole)) AddDetailLine(line);
+            foreach (string line in selectedGuide.GetDetails(guideLocation)) AddDetailLine(line);
         else AddDetailLine("Location requirements unknown.");
-        if (selectedGuide.Info.Count > 0) {
-            // (no blank line first: a section title already has space above it)
+        if (selectedGuide.Info.Count > 0)
+        {
             AddDetailLine("Description:");
             foreach (string line in selectedGuide.Info) AddDetailLine(line);
         }
         writingCatchBody = false;
-        catchBody.RecalculateLayout();
-        detailsList?.RecalculateSizes();
     }
+
+    private void ApplyBodyItems()
+    {
+        if (catchBody is null) return;
+        ApplyDetailItems(catchBody, bodyItems);
+        catchBody.RecalculateLayout();
+    }
+
+    private void AddDetailLine(string text, uint fontSize = 14, FontType? fontType = null, bool forceRow = false)
+    {
+        bool isItemRow = selectedGuide is not null
+            && (forceRow || text.Contains(':') && !selectedGuide.Info.Contains(text) || selectedGuide.ItemLinks.ContainsKey(text));
+        DetailItem item = isItemRow ? new DetailRow(text, fontSize, fontType) : new DetailLabel(text, fontSize, fontType);
+        (writingCatchBody ? bodyItems : detailItems).Add(item);
+    }
+
+    private void ApplyDetailItems(JournalListNode list, List<DetailItem> items)
+    {
+        var existing = list.Nodes.ToList();
+        for (int i = 0; i < items.Count; i++)
+        {
+            // When the shapes stop matching, drop this node and everything after it.
+            if (i < existing.Count && !DetailItemMatches(existing[i], items[i]))
+            {
+                for (int j = existing.Count - 1; j >= i; j--) list.RemoveNode(existing[j]);
+                existing.RemoveRange(i, existing.Count - i);
+            }
+            NodeBase node;
+            if (i < existing.Count) node = existing[i];
+            else
+            {
+                node = CreateDetailNode(items[i]);
+                list.AddNode(node);
+                existing.Add(node);
+            }
+            UpdateDetailNode(node, items[i]);
+        }
+        for (int j = existing.Count - 1; j >= items.Count; j--) list.RemoveNode(existing[j]);
+    }
+
+    private static bool DetailItemMatches(NodeBase node, DetailItem item) => item switch
+    {
+        // a heading and a plain line are laid out differently, so they never share a node
+        DetailLabel label => node is LabelTextNode existing && (existing.FontSize > 14) == (label.FontSize > 14),
+        DetailRow => node is ItemDetailRow,
+        DetailSelector => node is DetailSelectorRow<GuideLocation>,
+        DetailBody => node is JournalListNode,
+        _ => false,
+    };
+
+    private NodeBase CreateDetailNode(DetailItem item) => item switch
+    {
+        DetailLabel => new LabelTextNode { TextFlags = TextFlags.WordWrap | TextFlags.MultiLine },
+        DetailRow row => new ItemDetailRow(row.Text, selectedGuide!.ItemLinks, row.FontSize, row.Font),
+        DetailSelector => new DetailSelectorRow<GuideLocation>(
+            selectedGuide!.Locations, guideLocation, l => l.Label,
+            l => { guideLocation = l; guideDetailsPending = true; }, "Unknown"),
+        DetailBody => new JournalListNode { FitContents = true },
+        _ => throw new ArgumentOutOfRangeException(nameof(item)),
+    };
+
+    private void UpdateDetailNode(NodeBase node, DetailItem item)
+    {
+        float width = Math.Max(80.0f, detailsList!.Width - 24.0f);
+        switch (item)
+        {
+            case DetailLabel labelItem:
+                var label = (LabelTextNode)node;
+                label.Width = width;
+                label.FontSize = labelItem.FontSize;
+                // wrapped lines sit closer together than the default
+                label.LineSpacing = 18 + (labelItem.FontSize - 14) * 3 / 2;
+                if (labelItem.Font is FontType font) label.FontType = font;
+                // The heading has a fixed box with its text at the bottom, so it sits in the same
+                // place whatever the name and its tall glyphs aren't clipped at the top.
+                if (labelItem.FontSize > 14) label.AlignmentType = AlignmentType.BottomLeft;
+                label.String = labelItem.Text;
+                label.Height = LineHeight(label);
+                break;
+            case DetailRow rowItem:
+                var row = (ItemDetailRow)node;
+                row.SetContent(rowItem.Text, selectedGuide!.ItemLinks, rowItem.FontSize, rowItem.Font);
+                row.Width = width;
+                break;
+            case DetailSelector:
+                var selector = (DetailSelectorRow<GuideLocation>)node;
+                selector.SetOptions(selectedGuide!.Locations, guideLocation);
+                selector.Width = width;
+                break;
+            case DetailBody:
+                node.Width = width;
+                break;
+        }
+    }
+
+    // Opens or closes the details panel as soon as the selection changes, rather than a
+    // frame later, so the new contents never show in a panel that is still the old size.
+    private void SyncDetailsLayout()
+    {
+        if (DetailsOpen != detailsLaidOutOpen) LayoutAttachedNodes();
+    }
+
+    // An undiscovered fish is headed "Unknown Fish N", numbered like its list entry.
+    // (The heading font draws '#' as a numero sign, so there is no symbol.)
+    private string UnknownFishName(string name)
+        => !GuideMode && unknownFishNumbers.TryGetValue(selectedFish, out int number) ? $"Unknown Fish {number}" : name;
 
     private void ReflowDetails()
     {
@@ -108,7 +220,7 @@ public sealed partial class NativeJournalWindow
         {
             if (Math.Abs(label.Width - width) < 1) continue;
             label.Width = width;
-            label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2.0f) + (label.FontSize > 14 ? 3.0f : 0.0f);
+            label.Height = LineHeight(label);
         }
         foreach (var row in detailsList.ContentNode.GetNodes<ItemDetailRow>()) row.Width = width;
         foreach (var row in detailsList.ContentNode.GetNodes<DetailSelectorRow<GuideLocation>>()) row.Width = width;
@@ -116,7 +228,7 @@ public sealed partial class NativeJournalWindow
             catchBody.Width = width;
             foreach (var label in catchBody.GetNodes<LabelTextNode>()) {
                 label.Width = width;
-                label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2);
+                label.Height = LineHeight(label);
             }
             foreach (var row in catchBody.GetNodes<ItemDetailRow>()) row.Width = width;
             catchBody.RecalculateLayout();
@@ -133,31 +245,6 @@ public sealed partial class NativeJournalWindow
         detailsHint.IsVisible = selectedDetails is null;
     }
 
-    private void AddDetailLine(string text, uint fontSize = 14, FontType? fontType = null)
-    {
-        if (detailsList is null) return;
-        if (selectedGuide is not null && (text.Contains(":") && !selectedGuide.Info.Contains(text) || selectedGuide.ItemLinks.ContainsKey(text))) {
-            (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(new ItemDetailRow(text, selectedGuide.ItemLinks, fontSize, fontType) { Width = Math.Max(80, detailsList.Width - 24) });
-            return;
-        }
-        var label = new LabelTextNode
-        {
-            Width = Math.Max(80.0f, detailsList.Width - 24.0f),
-            FontSize = fontSize,
-            // wrapped lines sit 18px apart (the labels' default of 24 is airier than we want)
-            LineSpacing = 18 + (fontSize - 14) * 3 / 2,
-            TextFlags = TextFlags.WordWrap | TextFlags.MultiLine,
-            String = text,
-        };
-        if (fontType is FontType font) label.FontType = font;
-        label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2.0f);
-        if (fontSize > 14)
-        {
-            // the big heading's glyphs rise above a snug box and get clipped at the
-            // list's top edge: give it headroom and sit the text at the bottom of it
-            label.Height += 3.0f;
-            label.AlignmentType = AlignmentType.BottomLeft;
-        }
-        (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(label);
-    }
+    private static float LineHeight(LabelTextNode label)
+        => label.FontSize > 14 ? HeadingHeight : Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2.0f);
 }

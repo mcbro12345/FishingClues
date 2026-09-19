@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using FFXIVClientStructs.FFXIV.Client.Game;
-using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using Lumina.Excel.Sheets;
 
 using FishingClues.Base;
@@ -11,14 +9,12 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.Game.Logic;
 
-// Builds the fish-guide detail panel: where a fish can be caught, which
-// fishing pole to bring, and what's needed at each location.
+// Builds the fish details panel: where a fish can be caught and what it needs there.
 public sealed class GuideDetailsService
 {
     private readonly FishDataService fishData;
     private readonly JournalBuilder journal;
     private readonly FishDetailsFormatter formatter;
-    private List<Item>? poleCatalog;
 
     public GuideDetailsService(FishDataService fishData, JournalBuilder journal, FishDetailsFormatter formatter)
     {
@@ -56,8 +52,7 @@ public sealed class GuideDetailsService
                 links[formatter.ItemName(id)] = id;
         return new GuideDetails(fish.IdentityVisible ? fish.Name : "????", info,
             locations.DistinctBy(l => (l.SpotId, l.Spearfishing)).ToArray(),
-            location => GetFishingPoles(fish.ItemId, location),
-            (location, pole) => SelectedCatchDetails(fish.ItemId, location, pole), links);
+            location => SelectedCatchDetails(fish.ItemId, location), links);
     }
 
     // these relic fish require a specific pole; ordinary fish don't
@@ -75,68 +70,7 @@ public sealed class GuideDetailsService
     private int MinimumGathering(uint fish, uint hole) =>
         fishData.Data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(hole, out var entry) ? entry.MinimumGathering : 0;
 
-    private unsafe IReadOnlyList<FishingPole> GetFishingPoles(uint fish, GuideLocation location)
-    {
-        if (location.Spearfishing) return Array.Empty<FishingPole>();
-        poleCatalog ??= Services.DataManager.GetExcelSheet<Item>().Where(i => i.EquipSlotCategory.RowId != 0 &&
-            i.ClassJobCategory.RowId != 0 && i.EquipSlotCategory.Value.MainHand == 1 && i.ClassJobCategory.Value.FSH &&
-            !string.IsNullOrWhiteSpace(i.Name.ToString())).ToList();
-        var owned = new Dictionary<uint, (int Rank, int Gathering)>();
-        var inventory = InventoryManager.Instance();
-        if (inventory != null)
-        {
-            foreach (var type in new[] { InventoryType.EquippedItems, InventoryType.Inventory1, InventoryType.Inventory2,
-                InventoryType.Inventory3, InventoryType.Inventory4, InventoryType.ArmoryMainHand })
-            {
-                var container = inventory->GetInventoryContainer(type);
-                if (container == null || !container->IsLoaded || container->Items == null) continue;
-                for (int i = 0; i < container->Size; i++)
-                {
-                    var slot = container->Items + i;
-                    uint id = slot->GetBaseItemId();
-                    if (id == 0 || !Services.DataManager.GetExcelSheet<Item>().TryGetRow(id, out var item)) continue;
-                    int rank = type == InventoryType.EquippedItems ? 0 : 1;
-                    int gathering = PoleGathering(item, (slot->Flags & InventoryItem.ItemFlags.HighQuality) != 0);
-                    for (int j = 0; j < slot->Materia.Length; j++)
-                    {
-                        if (slot->Materia[j] == 0 || !Services.DataManager.GetExcelSheet<Materia>().TryGetRow(slot->Materia[j], out var materia)) continue;
-                        int grade = slot->MateriaGrades[j];
-                        if (materia.BaseParam.RowId == 72 && grade < materia.Value.Count) gathering += materia.Value[grade];
-                    }
-                    if (!owned.TryGetValue(id, out var previous) || rank < previous.Rank || (rank == previous.Rank && gathering > previous.Gathering))
-                        owned[id] = (rank, gathering);
-                }
-            }
-        }
-        var player = PlayerState.Instance();
-        int level = 0;
-        if (player != null && Services.DataManager.GetExcelSheet<ClassJob>().TryGetRow(18, out var fisher))
-        {
-            int index = fisher.ExpArrayIndex;
-            if (index >= 0 && index < player->ClassJobLevels.Length) level = player->ClassJobLevels[index];
-        }
-        uint required = RequiredPole(fish);
-        var poles = new List<FishingPole>();
-        foreach (var item in poleCatalog)
-        {
-            owned.TryGetValue(item.RowId, out var status);
-            bool has = owned.ContainsKey(item.RowId);
-            poles.Add(new FishingPole(item.RowId, item.Name.ToString(), has ? status.Rank : 2,
-                item.LevelEquip, has ? status.Gathering : PoleGathering(item, false)));
-        }
-        return PoleOrdering.Eligible(poles, level, required);
-    }
-
-    private static int PoleGathering(Item item, bool hq)
-    {
-        int value = 0;
-        for (int i = 0; i < item.BaseParam.Count; i++) if (item.BaseParam[i].RowId == 72) value += item.BaseParamValue[i];
-        if (hq) for (int i = 0; i < item.BaseParamSpecial.Count; i++)
-            if (item.BaseParamSpecial[i].RowId == 72) value += item.BaseParamValueSpecial[i];
-        return value;
-    }
-
-    private IReadOnlyList<string> SelectedCatchDetails(uint fish, GuideLocation location, FishingPole? pole)
+    private IReadOnlyList<string> SelectedCatchDetails(uint fish, GuideLocation location)
     {
         var requirements = formatter.BuildRequirementLines(fish);
         var lines = new List<string> { requirements.FirstOrDefault(l => l.StartsWith("Hook:")) ?? "Hook: Unknown" };

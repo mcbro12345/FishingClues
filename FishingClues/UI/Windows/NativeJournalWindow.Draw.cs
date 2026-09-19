@@ -1,50 +1,76 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.IO;
 using System.Numerics;
 using Dalamud.Game.Addon.Events;
-using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.System.Framework;
 using FFXIVClientStructs.FFXIV.Client.System.Input;
 using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using KamiToolKit.BaseTypes;
 using KamiToolKit.Nodes;
 
 using FishingClues.UI.Components;
-using FishingClues.Game.Models;
 
 namespace FishingClues.UI.Windows;
 
+// The per-frame update. Native buttons ignore clicks (and never send a
+// mouse-out) when only part of them is inside their list's clip region, so
+// rows cut off at a list's edge are hit-tested, highlighted and clicked by hand.
 public sealed partial class NativeJournalWindow
 {
+    private const float AreaHeaderTitleHeight = 28.0f;
+    private const long AvailabilityRefreshIntervalMs = 30000;
+    private const long CountdownRefreshIntervalMs = 1000;
+
     private FishEntryRowNode? partialHover;
-    // The manually highlighted, partly clipped area-list hole row (its native
-    // hover never fires, so its highlight has to be cleared by hand too).
     private ListButtonNode? partialAreaHover;
 
-    // A row that is only partly inside its list's clip region gets the native
-    // mouse-over (highlight on) but never the mouse-out, so its highlight
-    // stays lit after the cursor leaves. Every frame, drop the highlight on
-    // all such rows; the manual hover pass below re-lights the one that is
-    // really under the cursor.
-    private void ClearClippedHoverHighlights()
+    protected override unsafe void OnDraw(AtkUnitBase* addon)
     {
+        ClearManualHighlights();
+        UpdateLocateButton();
+        ApplyPendingWork();
+        RefreshAvailability();
+
+        var framework = Framework.Instance();
+        var mouse = framework == null ? default : framework->CursorInputs;
+        var stage = AtkStage.Instance();
+        bool overAddon = stage != null && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon;
+
+        UpdateResizeCursor(addon, mouse, overAddon);
+        if (!draggingDivider && overAddon)
+        {
+            HandleClippedFishRows(addon, mouse);
+            HandleClippedAreaRows(addon, mouse);
+            HandleSearchRightClick(addon, mouse);
+            if ((mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0) BeginDividerDragIfHit(addon, mouse);
+        }
+        if (draggingDivider) UpdateDividerDrag(addon, mouse);
+        UpdateMapInteraction(addon, mouse, stage);
+        AnimateAreaList();
+    }
+
+    // Native hover highlights on rows cut off at the edge of their list stay lit
+    // after the cursor leaves. Clear them every frame; the hit-testing below
+    // lights the one row that is really under the cursor.
+    private void ClearManualHighlights()
+    {
+        if (partialAreaHover is not null && spotButtons.ContainsKey(partialAreaHover)) partialAreaHover.HoverBackgroundNode.Alpha = 0;
+        partialAreaHover = null;
+        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HoverBackgroundNode.Alpha = 0;
+        partialHover = null;
+
         if (areaList is not null)
         {
             float offset = areaList.ScrollBarNode.ScrollPosition;
             foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
             {
                 float headerTop = header.Y - offset;
-                // The header's own title strip (28px) - lit by hand below when
-                // it is partly clipped, so it has to be un-lit by hand too.
-                if (headerTop < 0 || headerTop + 28.0f > areaList.Height) header.HeaderTextureNode.AddColor = System.Numerics.Vector3.Zero;
+                if (IsClipped(headerTop, headerTop + AreaHeaderTitleHeight, areaList.Height))
+                    header.HeaderTextureNode.AddColor = Vector3.Zero;
                 if (header.IsCollapsed) continue;
                 foreach (var spotButton in header.GetNodes<ListButtonNode>())
                 {
                     float top = headerTop + spotButton.Y;
-                    if (top < 0 || top + spotButton.Height > areaList.Height) spotButton.HoverBackgroundNode.Alpha = 0;
+                    if (IsClipped(top, top + spotButton.Height, areaList.Height)) spotButton.HoverBackgroundNode.Alpha = 0;
                 }
             }
         }
@@ -54,289 +80,155 @@ public sealed partial class NativeJournalWindow
             foreach (var row in fishButtons.Keys)
             {
                 float top = row.Y - offset;
-                if (top < 0 || top + row.Height > fishList.Height) row.HoverBackgroundNode.Alpha = 0;
+                if (IsClipped(top, top + row.Height, fishList.Height)) row.HoverBackgroundNode.Alpha = 0;
             }
         }
     }
 
-    protected override unsafe void OnDraw(AtkUnitBase* addon)
+    private static bool IsClipped(float top, float bottom, float listHeight) => top < 0 || bottom > listHeight;
+
+    // Work queued by other code to be done on the next frame.
+    private void ApplyPendingWork()
     {
-        if (partialAreaHover is not null && spotButtons.ContainsKey(partialAreaHover)) partialAreaHover.HoverBackgroundNode.Alpha = 0;
-        partialAreaHover = null;
-        ClearClippedHoverHighlights();
-        UpdateLocateButton();
-        var previousPartialHover = partialHover;
-        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HoverBackgroundNode.Alpha = 0;
-        partialHover = null;
-        if (guideDetailsPending && selectedGuide is not null && guideLocation is not null) {
+        SyncDetailsLayout();
+        if (guideDetailsPending && selectedGuide is not null && guideLocation is not null)
+        {
             guideDetailsPending = false;
-            if (guideLocationPending) {
-                guideLocationPending = false;
-                guidePoles = selectedGuide.GetPoles(guideLocation);
-                guidePole = guidePoles.FirstOrDefault();
-            }
             RenderCatchBody();
         }
-        if (searchPending) {
+        if (searchPending)
+        {
             searchPending = false;
             RefreshSearch();
         }
-        if (getAvailability is not null && availabilityRows.Count > 0 && Environment.TickCount64 >= nextAvailabilityRefresh)
+    }
+
+    private void RefreshAvailability()
+    {
+        if (options.GetAvailability is not { } getAvailability || availabilityRows.Count == 0
+            || Environment.TickCount64 < nextAvailabilityRefresh) return;
+        // Every second while a countdown is within its last minute or so, otherwise every 30s.
+        bool countingSeconds = false;
+        foreach (var (row, fish) in availabilityRows)
         {
-            nextAvailabilityRefresh = Environment.TickCount64 + 30000;
-            foreach (var (row, fish) in availabilityRows)
+            var info = getAvailability(fish);
+            if (info is null) continue;
+            row.SetAvailability(info.AvailableNow, info.BadgeText, info.Tooltip);
+            countingSeconds |= info.CountingSeconds;
+        }
+        nextAvailabilityRefresh = Environment.TickCount64 + (countingSeconds ? CountdownRefreshIntervalMs : AvailabilityRefreshIntervalMs);
+        RefreshFishListLayout();
+    }
+
+    // The cursor's position inside a list, in the list's own units, or null when it is outside.
+    private static unsafe Vector2? PositionInList(ScrollingNode<JournalListNode> list, CursorInputData mouse, float addonScale)
+    {
+        float scale = Math.Max(0.1f, addonScale);
+        Vector2 origin = list.ScreenPosition;
+        float x = (mouse.PositionX - origin.X) / scale;
+        float y = (mouse.PositionY - origin.Y) / scale;
+        bool inside = x >= 0 && x < list.ContentNode.Width && y >= 0 && y < list.Height;
+        return inside ? new Vector2(x, y) : null;
+    }
+
+    private unsafe void SetClickableCursor()
+    {
+        addonEvents.SetCursor(AddonCursorType.Clickable);
+        ownsResizeCursor = true;
+    }
+
+    private unsafe void HandleClippedFishRows(AtkUnitBase* addon, CursorInputData mouse)
+    {
+        if (fishList is null || PositionInList(fishList, mouse, addon->Scale) is not { } cursor) return;
+        float offset = fishList.ScrollBarNode.ScrollPosition;
+        foreach (var row in fishButtons.Keys)
+        {
+            float top = row.Y - offset;
+            float bottom = top + row.Height;
+            if (!IsClipped(top, bottom, fishList.Height) || cursor.Y < Math.Max(0, top) || cursor.Y >= Math.Min(fishList.Height, bottom))
+                continue;
+            row.HoverBackgroundNode.Alpha = 1;
+            partialHover = row;
+            SetClickableCursor();
+            if ((mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0)
             {
-                var info = getAvailability(fish);
-                if (info is not null) row.SetAvailability(info.AvailableNow, info.BadgeText, info.Tooltip);
+                // Clicking by hand skips the native click sound, so play it here.
+                UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
+                row.OnClick?.Invoke();
             }
-            RefreshFishListLayout();
+            break;
         }
-        var framework = Framework.Instance();
-        var mouse = framework == null ? default : framework->CursorInputs;
-        var stage = AtkStage.Instance();
-        int cursorKind = -1;
-        if (mouse.IsGameWindowFocused)
+    }
+
+    // An area header, or a hole row inside the expanded one, can straddle the
+    // bottom of the area list (the map panel usually shrinks it). It draws fine
+    // but eats every click, so a collapsed header is expanded directly and hole
+    // rows are handled like the fish rows above.
+    private unsafe void HandleClippedAreaRows(AtkUnitBase* addon, CursorInputData mouse)
+    {
+        if (areaList is null || PositionInList(areaList, mouse, addon->Scale) is not { } cursor) return;
+        float offset = areaList.ScrollBarNode.ScrollPosition;
+        bool clicked = (mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0;
+        foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
         {
-            if (draggingDivider && !configuration.IsDividerLocked(dragKind)) cursorKind = dragKind;
-            else if (stage != null && stage->AtkCollisionManager != null
-                && stage->AtkCollisionManager->IntersectingAddon == addon)
+            float headerTop = header.Y - offset;
+            // Only the title strip matters here, not the whole expanded block:
+            // treating a tall expanded header as clipped sent clicks on its
+            // fully visible rows down this title-only path.
+            float titleBottom = headerTop + AreaHeaderTitleHeight;
+            if (IsClipped(headerTop, titleBottom, areaList.Height))
             {
-                if (HitDivider(regionDividerHandle, mouse, addon->Scale)) cursorKind = 1;
-                else if (HitDivider(areaDividerHandle, mouse, addon->Scale)) cursorKind = 2;
-                else if (HitDivider(dividerHandle, mouse, addon->Scale)) cursorKind = 0;
+                if (cursor.Y < Math.Max(0, headerTop) || cursor.Y >= Math.Min(areaList.Height, titleBottom)) continue;
+                // the same +16 the header's own hover animation adds
+                header.HeaderTextureNode.AddColor = new Vector3(16.0f / 255.0f);
+                SetClickableCursor();
+                if (clicked && header.IsCollapsed) header.IsCollapsed = false;
+                return;
             }
-        }
-        if (cursorKind >= 0)
-        {
-            addonEvents.SetCursor(cursorKind == 0 ? AddonCursorType.ResizeNS : AddonCursorType.ResizeWE);
-            ownsResizeCursor = true;
-        }
-        else ReleaseResizeCursor();
-        if (!draggingDivider && fishList is not null && stage != null
-            && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon)
-        {
-            // native buttons reject clicks when only part of their bounds is clipped
-            float scale = Math.Max(0.1f, addon->Scale);
-            Vector2 origin = fishList.ScreenPosition;
-            float x = (mouse.PositionX - origin.X) / scale;
-            float y = (mouse.PositionY - origin.Y) / scale;
-            if (x >= 0 && x < fishList.ContentNode.Width && y >= 0 && y < fishList.Height)
+            if (header.IsCollapsed) continue;
+            foreach (var spotButton in header.GetNodes<ListButtonNode>())
             {
-                float offset = fishList.ScrollBarNode.ScrollPosition;
-                foreach (var row in fishButtons.Keys)
+                float top = headerTop + spotButton.Y;
+                float bottom = top + spotButton.Height;
+                if (!IsClipped(top, bottom, areaList.Height) || cursor.Y < Math.Max(0, top) || cursor.Y >= Math.Min(areaList.Height, bottom))
+                    continue;
+                spotButton.HoverBackgroundNode.Alpha = 1;
+                partialAreaHover = spotButton;
+                SetClickableCursor();
+                if (clicked)
                 {
-                    float top = row.Y - offset;
-                    float bottom = top + row.Height;
-                    bool partial = top < 0 || bottom > fishList.Height;
-                    if (partial && y >= Math.Max(0, top) && y < Math.Min(fishList.Height, bottom))
-                    {
-                        row.HoverBackgroundNode.Alpha = 1;
-                        partialHover = row;
-                        addonEvents.SetCursor(AddonCursorType.Clickable);
-                        ownsResizeCursor = true;
-                        if ((mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0)
-                        {
-                            // A normal row click plays its sound as part of the native button
-                            // reaction; invoking OnClick by hand skips that, so play it here
-                            // (as the area list's manual clicks do).
-                            UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
-                            row.OnClick?.Invoke();
-                        }
-                        break;
-                    }
+                    UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
+                    spotButton.OnClick?.Invoke();
                 }
+                return;
             }
         }
-        // Same native quirk as the fishList block above (a button whose own
-        // bounds are only partially inside its scrolling clip region never
-        // receives the click at all), applied to the area list - which
-        // needs it far more often now that the map panel usually sits open
-        // underneath it (see ReservedMapHeight): whatever area happens to
-        // land right where the shrunk-down list's bottom edge falls (an
-        // area header, or a discovered hole's row inside the one area
-        // that's currently expanded) renders its label just fine but
-        // silently eats every click, exactly like "Moraby Drydocks" being
-        // impossible to open. A collapsed header just gets un-collapsed
-        // directly (equivalent to what its own native click would have
-        // triggered); an expanded header's inner hole rows are checked the
-        // same way the fish rows are, since they're only ever partially
-        // clipped when the area itself is the one straddling the edge.
-        if (!draggingDivider && areaList is not null && stage != null
-            && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon)
-        {
-            float areaScale = Math.Max(0.1f, addon->Scale);
-            Vector2 areaOrigin = areaList.ScreenPosition;
-            float areaX = (mouse.PositionX - areaOrigin.X) / areaScale;
-            float areaY = (mouse.PositionY - areaOrigin.Y) / areaScale;
-            if (areaX >= 0 && areaX < areaList.ContentNode.Width && areaY >= 0 && areaY < areaList.Height)
-            {
-                float areaOffset = areaList.ScrollBarNode.ScrollPosition;
-                bool areaClicked = (mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0;
-                foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
-                {
-                    float headerTop = header.Y - areaOffset;
-                    // Only the header's own clickable title strip (see
-                    // AnimatedAreaHeaderNode.OnRecalculateLayout's hardcoded
-                    // 28px title height - the same value whether the header
-                    // is collapsed or expanded, since Height there IS 28 when
-                    // collapsed) matters for "is the thing you'd click to
-                    // expand/collapse this header partially clipped". Using
-                    // header.Height here instead - the FULL expanded block,
-                    // title plus every child row - was the bug behind
-                    // "Moraby Drydocks unclickable": whenever an expanded
-                    // header's total height overflowed the list (because its
-                    // LAST row sat at the clipped edge), every row under that
-                    // header, including ones sitting comfortably in full
-                    // view earlier in the list, got funneled into this
-                    // title-only branch instead of reaching the per-row
-                    // highlight/click handling below.
-                    const float headerTitleHeight = 28.0f;
-                    float headerTitleBottom = headerTop + headerTitleHeight;
-                    bool headerTitlePartial = headerTop < 0 || headerTitleBottom > areaList.Height;
-                    if (headerTitlePartial)
-                    {
-                        if (areaY >= Math.Max(0, headerTop) && areaY < Math.Min(areaList.Height, headerTitleBottom))
-                        {
-                            // Same +16 add-color the header's own hover animation
-                            // applies.
-                            header.HeaderTextureNode.AddColor = new System.Numerics.Vector3(16.0f / 255.0f);
-                            addonEvents.SetCursor(AddonCursorType.Clickable);
-                            ownsResizeCursor = true;
-                            if (areaClicked && header.IsCollapsed) header.IsCollapsed = false;
-                            break;
-                        }
-                        continue;
-                    }
-                    if (header.IsCollapsed) continue;
-                    bool foundSpot = false;
-                    foreach (var spotButton in header.GetNodes<ListButtonNode>())
-                    {
-                        float spotTop = headerTop + spotButton.Y;
-                        float spotBottom = spotTop + spotButton.Height;
-                        bool spotPartial = spotTop < 0 || spotBottom > areaList.Height;
-                        if (spotPartial && areaY >= Math.Max(0, spotTop) && areaY < Math.Min(areaList.Height, spotBottom))
-                        {
-                            spotButton.HoverBackgroundNode.Alpha = 1;
-                            partialAreaHover = spotButton;
-                            addonEvents.SetCursor(AddonCursorType.Clickable);
-                            ownsResizeCursor = true;
-                            if (areaClicked)
-                            {
-                                // A normal, non-clipped row click plays its
-                                // sound automatically as part of the native
-                                // AtkComponentButton click reaction - calling
-                                // OnClick directly here, bypassing that
-                                // native dispatch entirely (the whole reason
-                                // this manual path exists), skips it too, so
-                                // it needs to be triggered by hand.
-                                UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
-                                spotButton.OnClick?.Invoke();
-                            }
-                            foundSpot = true;
-                            break;
-                        }
-                    }
-                    if (foundSpot) break;
-                }
-            }
-        }
-        if (!draggingDivider && stage != null
-            && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon
-            && (mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0)
-        {
-            if (HitDivider(regionDividerHandle, mouse, addon->Scale)) BeginDividerDrag(1);
-            else if (HitDivider(areaDividerHandle, mouse, addon->Scale)) BeginDividerDrag(2);
-            else if (HitDivider(dividerHandle, mouse, addon->Scale)) BeginDividerDrag(0);
-        }
-        if (draggingDivider)
-        {
-            if (!mouse.IsGameWindowFocused || (mouse.MouseButtonHeldFlags & MouseButtonFlags.LBUTTON) == 0 || configuration.IsDividerLocked(dragKind))
-            {
-                draggingDivider = false;
-                saveDivider();
-                // settle every panel on its exact final size
-                LayoutAttachedNodes();
-            }
-            else
-            {
-                if (dragKind == 0)
-                {
-                    float body = Math.Max(212, ContentSize.Y - HeaderHeight - FishSummaryHeight);
-                    float delta = (mouse.PositionY - dragStartY) / Math.Max(0.1f, addon->Scale);
-                    configuration.DetailsHeightRatio = Math.Clamp(dragStartRatio - delta / body, 100 / body, 1 - 112 / body);
-                }
-                else
-                {
-                    float delta = (mouse.PositionX - dragStartX) / Math.Max(0.1f, addon->Scale);
-                    if (dragKind == 1)
-                        configuration.NativeRegionWidth = regionWidthSetting = Math.Clamp(dragStartWidth + delta, 130, 280);
-                    else
-                    {
-                        float maximum = Math.Min(500, Math.Max(240, ContentSize.X - regionWidthSetting - 380));
-                        configuration.NativeAreaWidth = areaWidthSetting = Math.Clamp(dragStartWidth + delta, 240, maximum);
-                    }
-                }
-                float scroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
-                float fishScroll = fishList?.ScrollBarNode.ScrollPosition ?? 0;
-                LayoutAttachedNodes();
-                if (detailsList is not null) RestoreScroll(detailsList, scroll);
-                if (fishList is not null) RestoreScroll(fishList, fishScroll);
-                // Have the game pick up the resized clipping/collision areas now
-                // rather than a frame later, so the panels don't trail the divider.
-                addon->UpdateCollisionNodeList(false);
-                if (dragKind == 0) RecordDragFrame(mouse.PositionY, addon->Scale);
-            }
-        }
-        UpdateMapInteraction(addon, mouse, stage);
+    }
+
+    // Right-clicking the fish guide's search bar clears it.
+    private unsafe void HandleSearchRightClick(AtkUnitBase* addon, CursorInputData mouse)
+    {
+        if (searchInput is null || (mouse.MouseButtonPressedFlags & MouseButtonFlags.RBUTTON) == 0) return;
+        Vector2 position = searchInput.ScreenPosition;
+        float scale = Math.Max(0.1f, addon->Scale);
+        bool over = mouse.PositionX >= position.X && mouse.PositionX <= position.X + searchInput.Width * scale
+            && mouse.PositionY >= position.Y && mouse.PositionY <= position.Y + searchInput.Height * scale;
+        if (!over) return;
+        searchInput.String = "";
+        SubmitSearchText("");
+    }
+
+    private void AnimateAreaList()
+    {
+        if (areaList is null) return;
         bool animating = false;
-        if (areaList is not null)
-        {
-            foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
-                animating |= header.Tick();
-            float previousHeight = areaList.ContentNode.Height;
-            areaList.ContentNode.RecalculateLayout();
-            if (animating || previousHeight != areaList.ContentNode.Height)
-            {
-                areaList.RecalculateSizes();
-
-            }
-            // RecalculateSizes() above (when it runs) internally re-triggers
-            // ContentNode.RecalculateLayout(), which resets every header's X back
-            // to 0 - reapply the inset after that, not before, so it isn't wiped
-            // out again by the very call meant to size things correctly.
-            ReapplyDropdownLeftInset();
-        }
-    }
-
-    // Diagnostics for the details-divider drag: the last frames of a drag, with what
-    // the plugin set (managed values) next to what the game holds (native height and
-    // on-screen Y), so any panel trailing the divider shows up as a mismatch.
-    private readonly System.Collections.Generic.Queue<string> dragFrames = new();
-    private int dragFrameNumber;
-    private float lastDragMouseY;
-
-    private unsafe void RecordDragFrame(float mouseY, float scale)
-    {
-        if (fishList is null || detailsList is null || detailsDivider is null || detailsBottomDivider is null) return;
-        string direction = mouseY < lastDragMouseY ? "UP" : mouseY > lastDragMouseY ? "down" : "still";
-        lastDragMouseY = mouseY;
-        AtkResNode* fishClip = fishList.ClippingContentNode;
-        AtkResNode* detailsClip = detailsList.ClippingContentNode;
-        AtkResNode* line = detailsDivider;
-        AtkResNode* bottom = detailsBottomDivider;
-        dragFrames.Enqueue(
-            $"#{dragFrameNumber++} {direction} mouseY={mouseY:0} ratio={configuration.DetailsHeightRatio:0.000} | "
-            + $"divider y={detailsDivider.Y:0.#} screenY={line->ScreenY:0.#} | "
-            + $"fishList y={fishList.Y:0.#} h={fishList.Height:0.#} clipH={fishList.ClippingContentNode.Height:0.#} nativeClipH={fishClip->Height:0.#} nativeClipScreenY={fishClip->ScreenY:0.#} | "
-            + $"detailsList y={detailsList.Y:0.#} h={detailsList.Height:0.#} clipH={detailsList.ClippingContentNode.Height:0.#} nativeClipH={detailsClip->Height:0.#} nativeClipScreenY={detailsClip->ScreenY:0.#} | "
-            + $"bottomDivider y={detailsBottomDivider.Y:0.#} screenY={bottom->ScreenY:0.#} scale={scale:0.##}");
-        while (dragFrames.Count > 40) dragFrames.Dequeue();
-    }
-
-    public string DescribeDragFrames()
-    {
-        if (dragFrames.Count == 0) return "Details divider drag: no drag recorded yet in this window.";
-        return "Details divider drag (last " + dragFrames.Count + " frames):\n  " + string.Join("\n  ", dragFrames);
+        foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
+            animating |= header.Tick();
+        float previousHeight = areaList.ContentNode.Height;
+        areaList.ContentNode.RecalculateLayout();
+        if (animating || previousHeight != areaList.ContentNode.Height) areaList.RecalculateSizes();
+        // Relaying the list out resets every header's X, so the inset is reapplied after.
+        ReapplyDropdownLeftInset();
     }
 
     protected override unsafe void OnFinalize(AtkUnitBase* addon)
@@ -361,9 +253,7 @@ public sealed partial class NativeJournalWindow
         selectedDetails = null;
         selectedGuide = null;
         guideLocation = null;
-        guidePole = null;
-        guidePoles = Array.Empty<FishingPole>();
-        guideDetailsPending = guideLocationPending = false;
+        guideDetailsPending = false;
         regionHeader = null;
         areaHeader = null;
         fishHeader = null;
@@ -373,6 +263,7 @@ public sealed partial class NativeJournalWindow
         spotTitle = null;
         spotSummary = null;
         summaryDivider = null;
+        areaHeaderDivider = null;
         regionDivider = null;
         fishDivider = null;
         normalLogButton = null;
@@ -390,15 +281,12 @@ public sealed partial class NativeJournalWindow
         if (partialAreaHover is not null && spotButtons.ContainsKey(partialAreaHover)) partialAreaHover.HoverBackgroundNode.Alpha = 0;
         partialAreaHover = null;
         ReleaseResizeCursor();
-        if (draggingDivider) { draggingDivider = false; saveDivider(); }
+        if (draggingDivider)
+        {
+            draggingDivider = false;
+            options.SaveLayout();
+        }
         SaveViewState();
-    }
-
-    private void ReleaseResizeCursor()
-    {
-        if (!ownsResizeCursor) return;
-        addonEvents.ResetCursor();
-        ownsResizeCursor = false;
     }
 
     private void SaveViewState()

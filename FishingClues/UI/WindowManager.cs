@@ -73,24 +73,22 @@ public sealed class WindowManager
 
     public void ShowDiagnostics(string report) => diagnosticWindow.Show(report);
 
-    // Lets Plugin.LogJournalDiagnostics fold the currently-open journal's
-    // live area-map state into the same report, rather than needing a
-    // separate /xllog capture for map bugs.
     public string DescribeMapState() => nativeJournal?.IsOpen == true
         ? nativeJournal.DescribeMapState()
         : "Area map: journal window is not currently open.";
 
-    public string DescribeDragFrames() => nativeJournal?.IsOpen == true
-        ? nativeJournal.DescribeDragFrames()
-        : "Details divider drag: journal window is not currently open.";
+    public string DescribeDetailsLayouts()
+        => string.Join("\n", new[] { nativeJournal, nativeGuide }.Where(w => w?.IsOpen == true).Select(w => w!.DescribeDetailsLayout()));
 
     public void OpenSettings() => dalamudSettings.IsOpen = true;
 
     public void SaveConfiguration()
     {
-        Services.PluginInterface.SavePluginConfig(configuration);
+        SaveLayout();
         dalamudClues.IsOpen = false;
     }
+
+    private void SaveLayout() => Services.PluginInterface.SavePluginConfig(configuration);
 
     public void ApplyLiveLayout()
     {
@@ -169,15 +167,23 @@ public sealed class WindowManager
             {
                 nativeJournal?.Dispose();
                 uint? pendingDiscovery = journal.ConsumePendingDiscoveredSpot();
-                nativeJournal = new NativeJournalWindow(regions, nativeJournalState,
-                    configuration.NativeRegionWidth, configuration.NativeAreaWidth,
-                    configuration.NativeAreaDropdownLeftInset, configuration.NativeAreaDropdownRightInset,
-                    configuration.ShowOpenNormalLogButton,
-                    OpenNormalFishingLog, configuration, formatter.BuildFishSection,
-                    ex => Services.Log.Error(ex, "Native journal button failed; using the text fallback."),
-                    () => Services.PluginInterface.SavePluginConfig(configuration), Services.AddonEvents,
-                    () => _ = OpenGuideAsync(), guideDetails: guideDetails.BuildGuideDetails, getAvailability: availability.GetAvailability,
-                    pendingDiscoveredSpotId: pendingDiscovery, openSettings: OpenSettings)
+                nativeJournal = new NativeJournalWindow(regions, nativeJournalState, configuration, new NativeJournalOptions
+                {
+                    RegionWidth = configuration.NativeRegionWidth,
+                    AreaWidth = configuration.NativeAreaWidth,
+                    AreaDropdownLeftInset = configuration.NativeAreaDropdownLeftInset,
+                    AreaDropdownRightInset = configuration.NativeAreaDropdownRightInset,
+                    ShowNormalLogButton = configuration.ShowOpenNormalLogButton,
+                    OpenNormalLog = OpenNormalFishingLog,
+                    BuildDetails = formatter.BuildFishSection,
+                    ReportSetupError = ex => Services.Log.Error(ex, "Native journal button failed; using the text fallback."),
+                    SaveLayout = SaveLayout,
+                    BuildGuideDetails = guideDetails.BuildGuideDetails,
+                    GetAvailability = availability.GetAvailability,
+                    OpenGuide = () => _ = OpenGuideAsync(),
+                    OpenSettings = OpenSettings,
+                    PendingDiscoveredSpotId = pendingDiscovery,
+                })
                 {
                     InternalName = "FishingCluesJournalNative",
                     OpenWindowSoundEffectId = silenceOpenSound ? 0 : 23,
@@ -229,11 +235,21 @@ public sealed class WindowManager
                 var fish = known.Values.Select(f => f with { IsRevealed = true, SpotId = 0 })
                     .OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToArray();
                 nativeGuide?.Dispose();
-                nativeGuide = new NativeJournalWindow(regions, nativeGuideState,
-                    130, 240, 0, 28, false, OpenNormalFishingLog, configuration, f => new FishClueSection(f.Name, Array.Empty<string>()),
-                    ex => Services.Log.Error(ex, "Fish guide failed."),
-                    () => Services.PluginInterface.SavePluginConfig(configuration), Services.AddonEvents, guideFish: fish, guideDetails: guideDetails.BuildGuideDetails,
-                    getAvailability: availability.GetAvailability)
+                nativeGuide = new NativeJournalWindow(regions, nativeGuideState, configuration, new NativeJournalOptions
+                {
+                    RegionWidth = 130,
+                    AreaWidth = 240,
+                    AreaDropdownLeftInset = 0,
+                    AreaDropdownRightInset = 28,
+                    ShowNormalLogButton = false,
+                    OpenNormalLog = OpenNormalFishingLog,
+                    BuildDetails = f => new FishClueSection(f.Name, Array.Empty<string>()),
+                    ReportSetupError = ex => Services.Log.Error(ex, "Fish guide failed."),
+                    SaveLayout = SaveLayout,
+                    BuildGuideDetails = guideDetails.BuildGuideDetails,
+                    GetAvailability = availability.GetAvailability,
+                    GuideFish = fish,
+                })
                 {
                     InternalName = "FishingCluesGuideNative", Title = "Fish Guide", Subtitle = "Fishing Clues",
                     Size = new Vector2(560, 650), ContentPadding = new Vector2(14, 12), RememberClosePosition = true,

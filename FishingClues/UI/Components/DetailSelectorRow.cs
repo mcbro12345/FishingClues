@@ -4,8 +4,6 @@ using System.Linq;
 using System.Numerics;
 using KamiToolKit.Nodes;
 
-using FishingClues.Game.Models;
-
 namespace FishingClues.UI.Components;
 
 // the toolkit closes the popup on selection; OnOptionSelected only queues the next-frame update
@@ -21,17 +19,17 @@ public sealed class DetailSelectorRow<T> : ResNode
         fullSelectedText = selected is null ? emptyText : labelText(selected);
         if (selectedLabel is not null) selectedLabel.String = fullSelectedText;
     }
+
     public void SetOptions(IReadOnlyList<T> options, T? selected)
     {
         selector.Options = options.ToList();
         selector.SelectedOption = selected;
         selector.IsEnabled = options.Count > 0;
-        selector.ItemTooltip = selected is FishingPole pole ? pole.ItemId : 0;
         UpdateSelectedLabel(selected);
         selector.ResizePopup();
     }
 
-    public DetailSelectorRow(string title, IReadOnlyList<T> options, T? selected,
+    public DetailSelectorRow(IReadOnlyList<T> options, T? selected,
         Func<T, string> text, Action<T> changed, string empty)
     {
         labelText = text;
@@ -40,13 +38,11 @@ public sealed class DetailSelectorRow<T> : ResNode
             GetLabelFunction = entry => text(entry), MaxListOptions = 7, Options = options.ToList(),
             PlaceholderString = options.Count == 0 ? empty : null,
             SelectedOption = selected, OnOptionSelected = entry => {
-                selector!.ItemTooltip = entry is FishingPole rod ? rod.ItemId : 0;
                 UpdateSelectedLabel(entry);
                 changed(entry);
             },
             IsEnabled = options.Count > 0,
         };
-        if (selected is FishingPole pole) selector.ItemTooltip = pole.ItemId;
         selector.AttachNode(this);
         selector.LabelNode.IsVisible = false;
         selectedLabel = new LabelTextNode {

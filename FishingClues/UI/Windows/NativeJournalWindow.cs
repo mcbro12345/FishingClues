@@ -1,12 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.IO;
 using System.Numerics;
-using Dalamud.Game.Addon.Events;
 using Dalamud.Plugin.Services;
-using FFXIVClientStructs.FFXIV.Client.System.Framework;
-using FFXIVClientStructs.FFXIV.Client.System.Input;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using KamiToolKit.BaseTypes;
 using KamiToolKit.Nodes;
@@ -14,61 +10,26 @@ using KamiToolKit.Nodes;
 using FishingClues.Base;
 using FishingClues.Game.Data;
 using FishingClues.Game.Models;
-using FishingClues.Game.Logic;
 using FishingClues.UI.Components;
 
 namespace FishingClues.UI.Windows;
 
-public sealed class NativeJournalSessionState
-{
-    public string? SelectedRegion { get; set; }
-    public uint SelectedSpot { get; set; }
-    public uint SelectedFish { get; set; }
-    public float RegionScroll, AreaScroll, FishScroll, DetailsScroll;
-    public Dictionary<string, RegionViewState> Regions { get; } = new(StringComparer.OrdinalIgnoreCase);
-    public string SearchText { get; set; } = "";
-    // True once the journal has been opened at least once this session -
-    // only the very first open auto-navigates to the player's current
-    // location; every open after that is purely the persisted view above.
-    public bool HasOpenedOnce { get; set; }
-    // The area map's view when the journal was last closed, restored the
-    // next time that same area's map is shown. MapZoom 0 = nothing saved.
-    public string? MapArea { get; set; }
-    public float MapZoom, MapPanX, MapPanY;
-}
-
-public sealed record RegionViewState(uint Spot, uint Fish, float AreaScroll, float FishScroll, float DetailsScroll);
-
 public sealed partial class NativeJournalWindow(
     IReadOnlyList<JournalRegion> regions,
     NativeJournalSessionState sessionState,
-    float configuredRegionWidth,
-    float configuredAreaWidth,
-    float configuredAreaDropdownLeftInset,
-    float configuredAreaDropdownRightInset,
-    bool configuredShowNormalLogButton,
-    Action openNormalLog,
     Configuration configuration,
-    Func<JournalFish, FishClueSection> buildDetails,
-    Action<Exception> reportSetupError,
-    Action saveDivider,
-    IAddonEventManager addonEvents,
-    Action? openGuide = null,
-    IReadOnlyList<JournalFish>? guideFish = null, Func<JournalFish, GuideDetails>? guideDetails = null,
-    Func<JournalFish, FishAvailabilityInfo?>? getAvailability = null,
-    // A fishing hole that was just discovered since the journal was last
-    // opened (see JournalBuilder.ConsumePendingDiscoveredSpot) - takes this
-    // window straight to it on open, ahead of both the persisted view and
-    // the first-open-of-session location auto-navigate. Only ever set for
-    // the real journal window, never the fish guide.
-    uint? pendingDiscoveredSpotId = null,
-    // Opens the plugin's settings window (the gear button in the title bar).
-    Action? openSettings = null) : NativeAddon
+    NativeJournalOptions options) : NativeAddon
 {
+    private static IAddonEventManager addonEvents => Services.AddonEvents;
+
     private const float HeaderHeight = 28.0f;
     private const float FishSummaryHeight = 54.0f;
+    private const float SearchDividerY = 33.0f;
+    private const float SearchButtonWidth = 90.0f;
+    // The details panel's height while no fish is selected: just room for its hint text.
+    private const float CollapsedDetailsHeight = 22.0f;
     private const float ColumnGap = 10.0f;
-    // The warm gold requested for the region list's text.
+    // Warm gold for the region list.
     private static readonly Vector4 RegionListTextColor = new(0.80f, 0.66f, 0.40f, 1.0f);
     private ScrollingNode<JournalListNode>? regionList;
     private ScrollingNode<JournalListNode>? areaList;
@@ -77,6 +38,9 @@ public sealed partial class NativeJournalWindow(
     private HorizontalLineNode? detailsDivider;
     private HorizontalLineNode? detailsBottomDivider;
     private float previousFishHeight = float.NaN, previousDetailsHeight = float.NaN;
+    // Whether the last layout had the details panel open (a fish selected).
+    private bool detailsLaidOutOpen;
+    private bool layingOut;
     private CollisionNode? dividerHandle;
     private CollisionNode? regionDividerHandle, areaDividerHandle;
     private int dragKind;
@@ -92,10 +56,7 @@ public sealed partial class NativeJournalWindow(
     private long nextAvailabilityRefresh;
     private readonly Dictionary<ListButtonNode, JournalRegion> regionButtons = new();
     private readonly Dictionary<ListButtonNode, uint> spotButtons = new();
-    // Populated fresh by SelectRegion each time it (re)builds the area list -
-    // lets SelectSpot/NavigateToSpot open the right area's dropdown live when
-    // jumping to a hole in a different area than the one currently open,
-    // without needing a full SelectRegion rebuild.
+    // Rebuilt by SelectRegion; lets a hole in another area open that area's dropdown.
     private readonly Dictionary<JournalArea, AnimatedAreaHeaderNode> areaHeaderByArea = new();
     private LabelTextNode? detailsHint;
     private CategoryTextNode? regionHeader;
@@ -104,6 +65,7 @@ public sealed partial class NativeJournalWindow(
     private CategoryTextNode? spotTitle;
     private LabelTextNode? spotSummary;
     private HorizontalLineNode? summaryDivider;
+    private HorizontalLineNode? areaHeaderDivider;
     private VerticalLineNode? regionDivider;
     private VerticalLineNode? fishDivider;
     private ButtonBase? normalLogButton;
@@ -115,85 +77,34 @@ public sealed partial class NativeJournalWindow(
     private bool searchPending;
     private GuideDetails? selectedGuide;
     private GuideLocation? guideLocation;
-    private FishingPole? guidePole;
-    private IReadOnlyList<FishingPole> guidePoles = Array.Empty<FishingPole>();
     private bool guideDetailsPending;
-    private bool guideLocationPending;
-    private bool GuideMode => guideFish is not null;
+    private bool GuideMode => options.GuideFish is not null;
     private JournalRegion? selectedRegion;
     private JournalSpot? selectedSpot;
     private Vector2 contentOrigin;
-    private float regionWidthSetting = configuredRegionWidth;
-    private float areaWidthSetting = configuredAreaWidth;
-    private float dropdownLeftInsetSetting = configuredAreaDropdownLeftInset;
-    private float dropdownRightInsetSetting = configuredAreaDropdownRightInset;
-    private bool showNormalLogButton = configuredShowNormalLogButton;
+    private float regionWidthSetting = options.RegionWidth;
+    private float areaWidthSetting = options.AreaWidth;
+    private float dropdownLeftInsetSetting = options.AreaDropdownLeftInset;
+    private float dropdownRightInsetSetting = options.AreaDropdownRightInset;
+    private bool showNormalLogButton = options.ShowNormalLogButton;
 
     protected override unsafe void OnSetup(AtkUnitBase* addon, Span<AtkValue> values)
     {
-        // A gear button in the title bar, left of the close button, that opens
-        // the plugin's settings (the game's own title-bar cog graphic).
-        if (openSettings is not null)
-        {
-            settingsButton = new TextureButtonNode
-            {
-                // The command panel's own round settings button (its diagnostics report:
-                // a CircleButtons.tex sprite, 28x28 at (0,0), plate and cog in one).
-                Size = new Vector2(SettingsButtonSize, SettingsButtonSize),
-                TexturePath = "ui/uld/CircleButtons.tex",
-                TextureCoordinates = new Vector2(0.0f, 0.0f),
-                TextureSize = new Vector2(28.0f, 28.0f),
-                TextTooltip = "Open the Fishing Clues settings",
-                OnClick = openSettings,
-            };
-            settingsButton.AttachNode(this);
-            PositionSettingsButton();
-        }
-
-        float regionWidth = Math.Clamp(regionWidthSetting, 130.0f, 280.0f);
-        float maximumAreaWidth = Math.Max(240.0f, ContentSize.X - regionWidth - 380.0f);
-        float areaWidth = Math.Clamp(areaWidthSetting, 240.0f, Math.Min(500.0f, maximumAreaWidth));
-        float fishX = regionWidth + areaWidth + ColumnGap * 2;
         contentOrigin = ContentStartPosition;
+        var (regionWidth, areaWidth) = ColumnWidths();
+        float fishX = regionWidth + areaWidth + ColumnGap * 2;
 
-        // "Region" and "Area" use the same serif small-caps font (Jupiter) as
-        // the game's own Fishing Log headings, written in mixed case so the
-        // font renders them as small capitals.
-        regionHeader = AddHeader("Region", 0, regionWidth, FontType.Jupiter, 16);
-        areaHeader = AddHeader("Area", regionWidth + ColumnGap, areaWidth, FontType.Jupiter, 16);
-        fishHeader = AddHeader("Fish", fishX, ContentSize.X - fishX, FontType.Jupiter, 16);
+        CreateSettingsButton();
+        CreateHeaders(regionWidth, areaWidth, fishX);
         CreateLocateButton();
         spotTitle = new CategoryTextNode { Height = 24.0f, String = "Select a fishing hole." };
         spotSummary = new LabelTextNode { Height = 24.0f, FontSize = 14, String = "" };
         spotTitle.AttachNode(this);
         spotSummary.AttachNode(this);
         summaryDivider = new HorizontalLineNode { Height = 2.0f };
-        summaryDivider.AttachNode(this);
 
-        float regionListHeight = ContentSize.Y - HeaderHeight - (showNormalLogButton || openGuide is not null ? 48.0f : 0.0f);
-        regionList = CreateList(contentOrigin + new Vector2(0, HeaderHeight), new Vector2(regionWidth, regionListHeight));
-        areaList = CreateList(contentOrigin + new Vector2(regionWidth + ColumnGap, HeaderHeight),
-            new Vector2(areaWidth, Math.Max(100.0f, ContentSize.Y - HeaderHeight - ReservedMapHeight())));
-        areaList.ContentNode.FitWidth = false;
-        fishList = CreateList(contentOrigin + new Vector2(fishX, HeaderHeight), new Vector2(ContentSize.X - fishX, ContentSize.Y - HeaderHeight));
-        detailsList = CreateList(contentOrigin, new Vector2(200, 150));
-        detailsList.ContentNode.ItemSpacing = 0.0f;
-        // headroom so the fish name's tall glyphs aren't clipped at the list's top edge
-        detailsList.ContentNode.FirstItemSpacing = 8.0f;
-        detailsDivider = new HorizontalLineNode { Height = 2.0f };
-        detailsList.AttachNode(this);
-        detailsDivider.AttachNode(this);
-        detailsBottomDivider = new HorizontalLineNode { Height = 2.0f };
-        detailsBottomDivider.AttachNode(this);
-        dividerHandle = new CollisionNode { ShowClickableCursor = false };
-        dividerHandle.AddEvent(AtkEventType.MouseDown, () =>
-        {
-            if (configuration.IsDividerLocked(0)) return;
-            BeginDividerDrag(0);
-        });
-        dividerHandle.AttachNode(this);
-        regionDividerHandle = CreateColumnHandle(1);
-        areaDividerHandle = CreateColumnHandle(2);
+        CreateLists(regionWidth, areaWidth, fishX);
+        CreateDividerHandles();
         detailsHint = new LabelTextNode
         {
             FontSize = 14,
@@ -201,121 +112,203 @@ public sealed partial class NativeJournalWindow(
             String = "Click a fish to see catch details",
         };
         detailsHint.AttachNode(this);
-
-        regionDivider = AddDivider(regionWidth + ColumnGap / 2, false);
-        fishDivider = AddDivider(regionWidth + areaWidth + ColumnGap * 1.5f, true);
-
-        foreach (JournalRegion region in regions)
-        {
-            JournalRegion captured = region;
-            var regionButton = new ListButtonNode
-            {
-                Height = 25.0f,
-                String = region.IsUnlocked ? region.Name : "???",
-                OnClick = () => SelectRegion(captured),
-            };
-            // Warm gold, matching the color requested. FontType.Miedinger was
-            // tried here for a "header" look, but it turned out to be a
-            // numeric/header-only glyph set in this game - it has no lowercase
-            // letters, so real place names rendered as dashes for every
-            // unsupported character. Left on the normal Axis font (the
-            // ListButtonNode default) so names actually display.
-            regionButton.LabelNode.TextColor = RegionListTextColor;
-            regionButtons.Add(regionButton, captured);
-            regionList.ContentNode.AddNode(regionButton);
-        }
-        regionList.RecalculateSizes();
-        regionList.AttachNode(this);
-        areaList.AttachNode(this);
-        fishList.AttachNode(this);
+        regionDivider = AddDivider(regionWidth + ColumnGap / 2);
+        fishDivider = AddDivider(regionWidth + areaWidth + ColumnGap * 1.5f);
+        PopulateRegionList();
+        regionList!.AttachNode(this);
+        areaList!.AttachNode(this);
+        fishList!.AttachNode(this);
+        // The horizontal dividers go on last so no list or panel is drawn over them.
+        summaryDivider.AttachNode(this);
+        areaHeaderDivider!.AttachNode(this);
+        detailsDivider!.AttachNode(this);
+        detailsBottomDivider!.AttachNode(this);
         ApplyAreaDropdownWidths();
         if (!GuideMode) BuildMapPanel();
 
         LayoutAttachedNodes();
 
-        if (!GuideMode && regions.Count > 0)
-        {
-            JournalRegion? forceRegion = null;
-            JournalArea? forceArea = null;
-            JournalSpot? forceSpot = null;
-
-            // A hole discovered since the log was last opened wins over
-            // everything else - open straight to it.
-            if (pendingDiscoveredSpotId is uint discoveredId)
-            {
-                foreach (JournalRegion candidateRegion in regions)
-                {
-                    JournalArea? candidateArea = candidateRegion.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == discoveredId && s.IsUnlocked));
-                    if (candidateArea is null) continue;
-                    forceRegion = candidateRegion;
-                    forceArea = candidateArea;
-                    forceSpot = candidateArea.Spots.First(s => s.Id == discoveredId);
-                    break;
-                }
-            }
-
-            if (!sessionState.HasOpenedOnce)
-            {
-                sessionState.HasOpenedOnce = true;
-                if (forceRegion is null)
-                {
-                    var (currentRegion, currentArea, currentSpot) = JournalBuilder.LocateCurrentLocation(regions);
-                    if (currentRegion is not null)
-                    {
-                        forceRegion = currentRegion;
-                        forceArea = currentArea;
-                        forceSpot = currentSpot;
-                    }
-                }
-            }
-
-            JournalRegion initialRegion = forceRegion
-                ?? regions.FirstOrDefault(region => region.Name == sessionState.SelectedRegion)
-                ?? regions[0];
-            SelectRegion(initialRegion, true, forceArea, forceSpot);
-        }
-        if (!GuideMode) InitializeJournalButton();
+        if (!GuideMode && regions.Count > 0) OpenInitialRegion();
+        if (GuideMode) CreateGuideSearch();
         else
         {
-            searchText = sessionState.SearchText;
-            searchInput = new TextInputNode {
-                Size = new Vector2(Math.Max(200, ContentSize.X), 28),
-                PlaceholderString = "Search all fish...", MaxCharacters = 100,
-                String = searchText,
-                OnInputComplete = text => { searchText = text.ToString(); sessionState.SearchText = searchText; searchPending = true; }
-            };
-            searchInput.AttachNode(this);
-            searchButton = new TextButtonNode {
-                String = "Search", Size = new Vector2(80, 28),
-                OnClick = () => { searchText = searchInput.String.ToString(); sessionState.SearchText = searchText; searchPending = true; }
-            };
-            searchButton.AttachNode(this);
-            if (!string.IsNullOrWhiteSpace(searchText)) searchPending = true;
-            else ShowSearchPrompt();
-            LayoutAttachedNodes();
+            InitializeJournalButton();
+            RestoreSelectedFish();
         }
-        // guide mode restores selection later, after RefreshSearch rebuilds the list
-        if (!GuideMode)
+        RestoreScroll(regionList!, sessionState.RegionScroll);
+        RestoreScroll(areaList!, sessionState.AreaScroll);
+        RestoreFishScroll(sessionState.FishScroll);
+        RestoreDetailsScroll(sessionState.DetailsScroll);
+    }
+
+    // The round cog left of the close button, which opens the plugin settings. It
+    // is the command panel's own settings button (CircleButtons.tex, plate and cog in one sprite).
+    private void CreateSettingsButton()
+    {
+        if (options.OpenSettings is null) return;
+        settingsButton = new TextureButtonNode
         {
-            var restoredFish = selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == sessionState.SelectedFish);
-            if (restoredFish is not null)
+            Size = new Vector2(SettingsButtonSize, SettingsButtonSize),
+            TexturePath = "ui/uld/CircleButtons.tex",
+            TextureCoordinates = new Vector2(0.0f, 0.0f),
+            TextureSize = new Vector2(28.0f, 28.0f),
+            TextTooltip = "Open the Fishing Clues settings",
+            OnClick = options.OpenSettings,
+        };
+        settingsButton.AttachNode(this);
+        PositionSettingsButton();
+    }
+
+    // The headings use the game's serif small-caps font (Jupiter), which draws
+    // mixed-case text as small capitals.
+    private void CreateHeaders(float regionWidth, float areaWidth, float fishX)
+    {
+        regionHeader = AddHeader("Region", 0, regionWidth, FontType.Jupiter, 16);
+        areaHeader = AddHeader("Area", regionWidth + ColumnGap, areaWidth, FontType.Jupiter, 16);
+        fishHeader = AddHeader("Fish", fishX, ContentSize.X - fishX, FontType.Jupiter, 16);
+        areaHeaderDivider = new HorizontalLineNode { Height = 2.0f };
+    }
+
+    private void CreateLists(float regionWidth, float areaWidth, float fishX)
+    {
+        float regionListHeight = ContentSize.Y - HeaderHeight - (showNormalLogButton || options.OpenGuide is not null ? 48.0f : 0.0f);
+        regionList = CreateList(contentOrigin + new Vector2(0, HeaderHeight), new Vector2(regionWidth, regionListHeight));
+        areaList = CreateList(contentOrigin + new Vector2(regionWidth + ColumnGap, HeaderHeight),
+            new Vector2(areaWidth, Math.Max(100.0f, ContentSize.Y - HeaderHeight - ReservedMapHeight())));
+        areaList.ContentNode.FitWidth = false;
+        fishList = CreateList(contentOrigin + new Vector2(fishX, HeaderHeight), new Vector2(ContentSize.X - fishX, ContentSize.Y - HeaderHeight));
+        detailsList = CreateList(contentOrigin, new Vector2(200, 150));
+        detailsList.ContentNode.ItemSpacing = 0.0f;
+        detailsList.ContentNode.FirstItemSpacing = 8.0f;
+        detailsList.AttachNode(this);
+    }
+
+    // The divider between the fish list and the details panel, its bottom edge,
+    // and the draggable handles for all three dividers.
+    private void CreateDividerHandles()
+    {
+        detailsDivider = new HorizontalLineNode { Height = 2.0f };
+        detailsBottomDivider = new HorizontalLineNode { Height = 2.0f };
+        dividerHandle = CreateColumnHandle(0);
+        regionDividerHandle = CreateColumnHandle(1);
+        areaDividerHandle = CreateColumnHandle(2);
+    }
+
+    private void PopulateRegionList()
+    {
+        foreach (JournalRegion region in regions)
+        {
+            var regionButton = new ListButtonNode
             {
-                selectedFish = restoredFish.FishParameterId;
-                UpdateFishSelection();
-                selectedDetails = buildDetails(restoredFish);
-                if (guideDetails is not null) {
-                    selectedGuide = guideDetails(restoredFish);
-                    guideLocation = selectedGuide.Locations.FirstOrDefault();
-                    guidePoles = guideLocation is null ? Array.Empty<FishingPole>() : selectedGuide.GetPoles(guideLocation);
-                    guidePole = guidePoles.FirstOrDefault();
-                }
-                RenderDetails();
+                Height = 25.0f,
+                String = region.IsUnlocked ? region.Name : "???",
+                OnClick = () => SelectRegion(region),
+            };
+            regionButton.LabelNode.TextColor = RegionListTextColor;
+            regionButtons.Add(regionButton, region);
+            regionList!.ContentNode.AddNode(regionButton);
+        }
+        regionList!.RecalculateSizes();
+    }
+
+    // Opens at a newly discovered hole if there is one, else at the player's
+    // location the first time the journal opens this session, else where it was left.
+    private void OpenInitialRegion()
+    {
+        JournalRegion? forceRegion = null;
+        JournalArea? forceArea = null;
+        JournalSpot? forceSpot = null;
+
+        if (options.PendingDiscoveredSpotId is uint discoveredId)
+        {
+            foreach (JournalRegion candidateRegion in regions)
+            {
+                JournalArea? candidateArea = candidateRegion.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == discoveredId && s.IsUnlocked));
+                if (candidateArea is null) continue;
+                forceRegion = candidateRegion;
+                forceArea = candidateArea;
+                forceSpot = candidateArea.Spots.First(s => s.Id == discoveredId);
+                break;
             }
         }
-        RestoreScroll(regionList, sessionState.RegionScroll);
-        RestoreScroll(areaList, sessionState.AreaScroll);
-        RestoreScroll(fishList, sessionState.FishScroll);
-        RestoreScroll(detailsList, sessionState.DetailsScroll);
+
+        if (!sessionState.HasOpenedOnce)
+        {
+            sessionState.HasOpenedOnce = true;
+            if (forceRegion is null)
+            {
+                var (currentRegion, currentArea, currentSpot) = JournalBuilder.LocateCurrentLocation(regions);
+                if (currentRegion is not null)
+                {
+                    forceRegion = currentRegion;
+                    forceArea = currentArea;
+                    forceSpot = currentSpot;
+                }
+            }
+        }
+
+        JournalRegion initialRegion = forceRegion
+            ?? regions.FirstOrDefault(region => region.Name == sessionState.SelectedRegion)
+            ?? regions[0];
+        SelectRegion(initialRegion, true, forceArea, forceSpot);
+    }
+
+    private void CreateGuideSearch()
+    {
+        searchText = sessionState.SearchText;
+        searchInput = new TextInputNode
+        {
+            Size = new Vector2(Math.Max(200, ContentSize.X), 28),
+            PlaceholderString = "Search all fish...",
+            MaxCharacters = 100,
+            String = searchText,
+            OnInputComplete = text => SubmitSearchText(text.ToString()),
+        };
+        searchInput.AttachNode(this);
+        searchButton = new TextButtonNode
+        {
+            String = "Search",
+            Size = new Vector2(80, 28),
+            OnClick = () => SubmitSearchText(searchInput.String.ToString()),
+        };
+        searchButton.AttachNode(this);
+        if (!string.IsNullOrWhiteSpace(searchText)) searchPending = true;
+        else ShowSearchPrompt();
+        LayoutAttachedNodes();
+    }
+
+    private void SubmitSearchText(string text)
+    {
+        searchText = text;
+        sessionState.SearchText = text;
+        searchPending = true;
+    }
+
+    // Reopens the fish that was selected when the journal was last closed. (The
+    // guide restores its selection after its search results are built.)
+    private void RestoreSelectedFish()
+    {
+        var restoredFish = selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == sessionState.SelectedFish);
+        if (restoredFish is null) return;
+        selectedFish = restoredFish.FishParameterId;
+        UpdateFishSelection();
+        selectedDetails = options.BuildDetails(restoredFish);
+        if (options.BuildGuideDetails is not null)
+        {
+            selectedGuide = options.BuildGuideDetails(restoredFish);
+            guideLocation = selectedGuide.Locations.FirstOrDefault();
+        }
+        RenderDetails();
+    }
+
+    private void RestoreFishScroll(float position)
+    {
+        if (fishList is not null) RestoreScroll(fishList, position);
+    }
+
+    private void RestoreDetailsScroll(float position)
+    {
+        if (detailsList is not null) RestoreScroll(detailsList, position);
     }
 
     private static void RestoreScroll(ScrollingNode<JournalListNode> list, float position)
@@ -339,62 +332,11 @@ public sealed partial class NativeJournalWindow(
         }
         catch (Exception ex)
         {
-            reportSetupError(ex);
+            options.ReportSetupError(ex);
             normalLogButton?.Dispose();
             normalLogButton = new TextButtonNode { String = "Log" };
             AttachJournalButton();
         }
-    }
-
-    private CollisionNode CreateColumnHandle(int kind)
-    {
-        var handle = new CollisionNode { ShowClickableCursor = false };
-        handle.AddEvent(AtkEventType.MouseDown, () =>
-        {
-            if (configuration.IsDividerLocked(kind)) return;
-            BeginDividerDrag(kind);
-        });
-        handle.AttachNode(this);
-        return handle;
-    }
-
-    // AddEvent(MouseDown, ...) marks a node HasCollision so it blocks whatever's
-    // behind it from ever seeing the click - by design, so dragging a divider
-    // doesn't also click through to the fish list underneath it. That collision
-    // flag isn't tied to IsVisible, though, so a "locked" (invisible) handle was
-    // still silently swallowing clicks meant for anything under its strip - which
-    // is exactly where the area dropdown boxes sit once they're inset far enough
-    // to reach the region/area gap. This turns collision off along with
-    // visibility so a locked handle stops intercepting clicks entirely.
-    private static void SetDividerHandleInteractive(CollisionNode handle, bool interactive)
-    {
-        handle.IsVisible = interactive;
-        if (interactive)
-            handle.AddNodeFlags(NodeFlags.EmitsEvents, NodeFlags.RespondToMouse, NodeFlags.HasCollision);
-        else
-            handle.RemoveNodeFlags(NodeFlags.HasCollision, NodeFlags.RespondToMouse, NodeFlags.EmitsEvents);
-    }
-
-    private unsafe void BeginDividerDrag(int kind)
-    {
-        var framework = Framework.Instance();
-        if (framework == null || configuration.IsDividerLocked(kind)) return;
-        var mouse = framework->CursorInputs;
-        if ((mouse.MouseButtonHeldFlags & MouseButtonFlags.LBUTTON) == 0) return;
-        draggingDivider = true;
-        dragKind = kind;
-        dragStartX = mouse.PositionX;
-        dragStartY = mouse.PositionY;
-        dragStartRatio = configuration.DetailsHeightRatio;
-        dragStartWidth = kind == 1 ? regionList?.Width ?? regionWidthSetting : areaList?.Width ?? areaWidthSetting;
-    }
-
-    private static bool HitDivider(CollisionNode? handle, CursorInputData mouse, float scale)
-    {
-        if (handle is null || !handle.IsVisible) return false;
-        Vector2 position = handle.ScreenPosition;
-        return mouse.PositionX >= position.X && mouse.PositionX <= position.X + handle.Width * scale
-            && mouse.PositionY >= position.Y && mouse.PositionY <= position.Y + handle.Height * scale;
     }
 
     private void AttachJournalButton()
@@ -405,275 +347,18 @@ public sealed partial class NativeJournalWindow(
         normalLogButton.IsVisible = showNormalLogButton;
         normalLogButton.IsEnabled = true;
         normalLogButton.TextTooltip = "Open the normal Fishing Log";
-        normalLogButton.OnClick = openNormalLog;
+        normalLogButton.OnClick = options.OpenNormalLog;
         normalLogButton.AttachNode(this);
-        if (openGuide is not null && guideButton is null)
+        if (options.OpenGuide is not null && guideButton is null)
         {
             guideButton = new TextureButtonNode {
                 Position = FooterPosition + new Vector2(34, 0), Size = new Vector2(28, 28),
                 TexturePath = "ui/uld/FishingNoteBook.tex",
                 TextureCoordinates = new Vector2(88, 0), TextureSize = new Vector2(28, 28),
-                TextTooltip = "Search all fish", OnClick = openGuide,
+                TextTooltip = "Search all fish", OnClick = options.OpenGuide,
             };
             guideButton.AttachNode(this);
         }
-    }
-
-    public void ApplyLayout(float windowWidth, float windowHeight, float regionWidth, float areaWidth,
-        float dropdownLeftInset, float dropdownRightInset, bool configuredShowButton)
-    {
-        regionWidthSetting = regionWidth;
-        areaWidthSetting = areaWidth;
-        dropdownLeftInsetSetting = dropdownLeftInset;
-        dropdownRightInsetSetting = dropdownRightInset;
-        showNormalLogButton = configuredShowButton;
-        Size = new Vector2(windowWidth, windowHeight);
-        nextAvailabilityRefresh = 0;
-        if (!IsOpen)
-            return;
-
-        // Relaying out the lists below resets their scroll to the top as a side
-        // effect, and a settings change doesn't otherwise touch the currently open
-        // fish - preserve both here so toggling a setting doesn't visibly reset
-        // the journal the player is looking at.
-        float regionScroll = regionList?.ScrollBarNode.ScrollPosition ?? 0;
-        float areaScroll = areaList?.ScrollBarNode.ScrollPosition ?? 0;
-        float fishScroll = fishList?.ScrollBarNode.ScrollPosition ?? 0;
-        float detailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
-
-        SetWindowSize(Size);
-        LayoutAttachedNodes();
-        RefreshSelectedDetails();
-
-        if (regionList is not null) RestoreScroll(regionList, regionScroll);
-        if (areaList is not null) RestoreScroll(areaList, areaScroll);
-        if (fishList is not null) RestoreScroll(fishList, fishScroll);
-        if (detailsList is not null) RestoreScroll(detailsList, detailsScroll);
-    }
-
-    // Settings such as the 12-hour time format or the availability countdown only
-    // affect an already-open fish's details when re-rendered here; otherwise the
-    // open panel keeps showing whatever text was built when the fish was clicked.
-    private void RefreshSelectedDetails()
-    {
-        if (selectedFish == 0) return;
-        JournalFish? fish = GuideMode
-            ? guideFish?.FirstOrDefault(f => f.FishParameterId == selectedFish)
-            : selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == selectedFish);
-        if (fish is null) return;
-
-        selectedDetails = buildDetails(fish);
-        if (guideDetails is not null)
-        {
-            string? locationLabel = guideLocation?.Label;
-            string? poleLabel = guidePole?.Label;
-            selectedGuide = guideDetails(fish);
-            guideLocation = locationLabel is null ? selectedGuide.Locations.FirstOrDefault()
-                : selectedGuide.Locations.FirstOrDefault(l => l.Label == locationLabel) ?? selectedGuide.Locations.FirstOrDefault();
-            guidePoles = guideLocation is null ? Array.Empty<FishingPole>() : selectedGuide.GetPoles(guideLocation);
-            guidePole = poleLabel is null ? guidePoles.FirstOrDefault()
-                : guidePoles.FirstOrDefault(p => p.Label == poleLabel) ?? guidePoles.FirstOrDefault();
-        }
-        RenderDetails();
-    }
-
-    private void LayoutAttachedNodes()
-    {
-        if (regionList is null || areaList is null || fishList is null)
-            return;
-
-        if (selectedSpot is not null && renderedUncaughtFirst != configuration.UncaughtFishFirst)
-        {
-            var details = selectedDetails;
-            var guide = selectedGuide;
-            var location = guideLocation;
-            var pole = guidePole;
-            var poles = guidePoles;
-            uint fish = selectedFish;
-            SelectSpot(selectedSpot);
-            selectedDetails = details;
-            selectedGuide = guide;
-            guideLocation = location;
-            guidePole = pole;
-            guidePoles = poles;
-            selectedFish = fish;
-            UpdateFishSelection();
-        }
-
-        contentOrigin = ContentStartPosition;
-        float regionWidth = Math.Clamp(regionWidthSetting, 130.0f, 280.0f);
-        float maximumAreaWidth = Math.Max(240.0f, ContentSize.X - regionWidth - 380.0f);
-        float areaWidth = Math.Clamp(areaWidthSetting, 240.0f, Math.Min(500.0f, maximumAreaWidth));
-        float fishX = GuideMode ? 0 : regionWidth + areaWidth + ColumnGap * 2.0f;
-        float listHeight = Math.Max(100.0f, ContentSize.Y - HeaderHeight);
-        float regionListHeight = Math.Max(100.0f, listHeight - (showNormalLogButton || openGuide is not null ? 48.0f : 0.0f));
-        float fishWidth = Math.Max(100.0f, ContentSize.X - fishX);
-
-        SetHeaderLayout(regionHeader, 0.0f, regionWidth);
-        SetHeaderLayout(areaHeader, regionWidth + ColumnGap, areaWidth);
-        SetHeaderLayout(fishHeader, fishX, fishWidth);
-        PositionLocateButton();
-
-        regionList.Position = contentOrigin + new Vector2(0.0f, HeaderHeight);
-        regionList.Size = new Vector2(regionWidth, regionListHeight);
-        areaList.Position = contentOrigin + new Vector2(regionWidth + ColumnGap, HeaderHeight);
-        areaList.Size = new Vector2(areaWidth, Math.Max(100.0f, listHeight - ReservedMapHeight()));
-        if (spotTitle is not null)
-        {
-            spotTitle.Position = contentOrigin + new Vector2(fishX, HeaderHeight);
-            spotTitle.Width = fishWidth - 16;
-        }
-        if (spotSummary is not null)
-        {
-            spotSummary.Position = contentOrigin + new Vector2(fishX, HeaderHeight + 26);
-            spotSummary.Width = fishWidth - 16;
-        }
-        if (summaryDivider is not null)
-        {
-            summaryDivider.Position = contentOrigin + new Vector2(fishX, HeaderHeight + 52);
-            summaryDivider.Width = fishWidth - 10;
-        }
-        regionList.IsVisible = areaList.IsVisible = !GuideMode;
-        if (regionHeader is not null) regionHeader.IsVisible = !GuideMode;
-        if (areaHeader is not null) areaHeader.IsVisible = !GuideMode;
-        if (fishHeader is not null) fishHeader.IsVisible = !GuideMode;
-        if (spotTitle is not null) spotTitle.IsVisible = !GuideMode;
-        if (spotSummary is not null) spotSummary.IsVisible = !GuideMode;
-        if (summaryDivider is not null) summaryDivider.IsVisible = !GuideMode;
-        if (searchInput is not null) {
-            searchInput.Position = contentOrigin;
-            searchInput.Width = Math.Max(100, fishWidth - 90);
-            if (searchButton is not null) searchButton.Position = contentOrigin + new Vector2(fishWidth - 80, 3.5f);
-        }
-        float fishBodyHeight = listHeight - (GuideMode ? 8 : FishSummaryHeight);
-        fishList.Position = contentOrigin + new Vector2(fishX, HeaderHeight + (GuideMode ? 8 : FishSummaryHeight));
-        fishList.Size = new Vector2(fishWidth, fishBodyHeight);
-        RefreshFishListLayout();
-        if (detailsList is not null && detailsDivider is not null)
-        {
-            float ratio = float.IsFinite(configuration.DetailsHeightRatio) ? configuration.DetailsHeightRatio : 0.38f;
-            float detailsHeight = Math.Clamp(fishBodyHeight * ratio, 100, Math.Max(100, fishBodyHeight - 112));
-            float fishHeight = fishBodyHeight - detailsHeight - 12.0f;
-            detailsList.IsVisible = true;
-            detailsDivider.IsVisible = true;
-            if (dividerHandle is not null)
-            {
-                SetDividerHandleInteractive(dividerHandle, !configuration.IsDividerLocked(0));
-                dividerHandle.ShowClickableCursor = false;
-                dividerHandle.Position = fishList.Position + new Vector2(0, fishHeight);
-                dividerHandle.Size = new Vector2(fishWidth, 12);
-            }
-            // The game applies a node's new size at once but only redraws it at its new
-            // position a frame later (its diagnostics report showed the on-screen Y
-            // trailing the set Y by exactly one frame). While dragging the details
-            // divider the moving nodes' sizes therefore use last frame's values, so
-            // each list's edge stays put against its divider instead of running ahead.
-            float appliedFishHeight = fishHeight, appliedDetailsHeight = detailsHeight;
-            if (draggingDivider && dragKind == 0 && !float.IsNaN(previousFishHeight))
-            {
-                appliedFishHeight = previousFishHeight;
-                appliedDetailsHeight = previousDetailsHeight;
-            }
-            previousFishHeight = fishHeight;
-            previousDetailsHeight = detailsHeight;
-            fishList.Height = appliedFishHeight;
-            detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight);
-            detailsDivider.Width = fishWidth;
-            // The list runs from just under the top divider to just above the bottom
-            // one, so scrolled text is cut off flush at the divider lines.
-            Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 2.0f);
-            detailsList.Position = panelOrigin + new Vector2(8, 0);
-            detailsList.Size = new Vector2(fishWidth - 16, appliedDetailsHeight + 8.0f);
-            if (detailsBottomDivider is not null)
-            {
-                detailsBottomDivider.IsVisible = true;
-                detailsBottomDivider.Position = fishList.Position + new Vector2(0, fishHeight + detailsHeight + 10.0f);
-                detailsBottomDivider.Width = fishWidth;
-            }
-            ReflowDetails();
-        }
-
-        SetDividerLayout(regionDivider, regionWidth + ColumnGap / 2.0f, false);
-        SetDividerLayout(fishDivider, regionWidth + areaWidth + ColumnGap * 1.5f, true);
-        if (regionDividerHandle is not null)
-        {
-            regionDividerHandle.Position = contentOrigin + new Vector2(regionWidth, 0);
-            regionDividerHandle.Size = new Vector2(ColumnGap, ContentSize.Y);
-            SetDividerHandleInteractive(regionDividerHandle, !configuration.IsDividerLocked(1));
-            regionDividerHandle.ShowClickableCursor = false;
-        }
-        if (areaDividerHandle is not null)
-        {
-            areaDividerHandle.Position = contentOrigin + new Vector2(regionWidth + areaWidth + ColumnGap, 0);
-            areaDividerHandle.Size = new Vector2(ColumnGap, ContentSize.Y);
-            SetDividerHandleInteractive(areaDividerHandle, !configuration.IsDividerLocked(2));
-            areaDividerHandle.ShowClickableCursor = false;
-        }
-        if (normalLogButton is not null)
-        {
-            normalLogButton.Position = FooterPosition;
-            normalLogButton.IsVisible = showNormalLogButton;
-        }
-        if (guideButton is not null) guideButton.Position = FooterPosition + new Vector2(34, 0);
-        if (GuideMode) {
-            if (regionDivider is not null) regionDivider.IsVisible = false;
-            if (fishDivider is not null) fishDivider.IsVisible = false;
-            if (regionDividerHandle is not null) regionDividerHandle.IsVisible = false;
-            if (areaDividerHandle is not null) areaDividerHandle.IsVisible = false;
-        }
-        ApplyAreaDropdownWidths();
-        regionList.RecalculateSizes();
-        RefreshFishListLayout();
-        // native ellipsis overwrites the text buffer, so restore from the model, not the label
-        foreach (var pair in regionButtons)
-            pair.Key.String = pair.Value.IsUnlocked ? pair.Value.Name : "???";
-        if (configuration.IsDividerLocked(dragKind)) ReleaseResizeCursor();
-        LayoutMapPanel();
-    }
-
-    private const float MinDropdownWidth = 80.0f;
-    private const float MaxDropdownInset = 150.0f;
-
-    // The sliders are relative to a preferred baseline (0 on the slider = that
-    // baseline, not "fills the column"). Negative insets (from the baseline) let
-    // the dropdown box extend past that edge of the area column instead of only
-    // ever shrinking in from it.
-    private float EffectiveLeftInset() => Math.Clamp(
-        dropdownLeftInsetSetting + Configuration.DropdownLeftInsetBaseline, -MaxDropdownInset, MaxDropdownInset);
-    private float EffectiveRightInset() => Math.Clamp(
-        dropdownRightInsetSetting + Configuration.DropdownRightInsetBaseline, -MaxDropdownInset, MaxDropdownInset);
-
-    private float EffectiveDropdownWidth()
-    {
-        float availableWidth = areaList is null ? areaWidthSetting : areaList.ContentNode.Width;
-        float usable = availableWidth - 12.0f - EffectiveLeftInset() - EffectiveRightInset();
-        return Math.Max(MinDropdownWidth, usable);
-    }
-
-    private void ApplyAreaDropdownWidths()
-    {
-        if (areaList is null)
-            return;
-        float width = EffectiveDropdownWidth();
-        foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
-            header.Width = width;
-        areaList.ContentNode.RecalculateLayout();
-        areaList.RecalculateSizes();
-        // ScrollingNode.RecalculateSizes() (via its own OnSizeChanged) ends by
-        // calling ContentNode.RecalculateLayout() again internally, which resets
-        // every header back to X=0 (its default left alignment) - so the inset has
-        // to be reapplied after RecalculateSizes(), not before it, or it's wiped
-        // out before this method even returns and the dropdown stays unclickable
-        // at the spot it's actually drawn.
-        ReapplyDropdownLeftInset();
-    }
-
-    private void ReapplyDropdownLeftInset()
-    {
-        if (areaList is null) return;
-        float leftInset = EffectiveLeftInset();
-        foreach (CollapsingHeaderNode header in areaList.ContentNode.GetNodes<CollapsingHeaderNode>())
-            header.X = leftInset;
     }
 
     private ScrollingNode<JournalListNode> CreateList(Vector2 position, Vector2 size)
@@ -705,7 +390,7 @@ public sealed partial class NativeJournalWindow(
         return header;
     }
 
-    private VerticalLineNode AddDivider(float x, bool emphasized)
+    private VerticalLineNode AddDivider(float x)
     {
         var line = new VerticalLineNode
         {
@@ -716,21 +401,4 @@ public sealed partial class NativeJournalWindow(
         line.AttachNode(this);
         return line;
     }
-
-    private void SetHeaderLayout(CategoryTextNode? header, float x, float width)
-    {
-        if (header is null)
-            return;
-        header.Position = contentOrigin + new Vector2(x, 0.0f);
-        header.Size = new Vector2(width, 26.0f);
-    }
-
-    private void SetDividerLayout(VerticalLineNode? line, float x, bool emphasized)
-    {
-        if (line is null)
-            return;
-        line.Position = contentOrigin + new Vector2(x - 1.0f, 0.0f);
-        line.Height = ContentSize.Y;
-    }
-
 }

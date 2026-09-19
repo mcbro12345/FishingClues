@@ -30,22 +30,14 @@ public sealed record JournalSpot(
     ushort RegionPlaceNameId,
     ushort SpotPlaceNameId,
     IReadOnlyList<JournalFish> Fish,
-    // Pixel position on the area's 2048x2048 map texture (1024,1024 = map
-    // center), already converted from the fishing hole's raw world X/Z via the
-    // same Map SizeFactor/Offset the game itself uses. Null when the spot's
-    // territory has no usable map (e.g. an instanced or non-field zone).
+    // Pixel position on the area's 2048x2048 map texture (1024,1024 is the centre).
+    // Null when the zone has no usable map.
     Vector2? MapPixelPosition = null,
-    // Game path of the area's map texture (e.g. "ui/map/s1d1/00/s1d100_m.tex"),
-    // shared by every spot in the same territory. Null alongside MapPixelPosition.
+    // Game path of the area's map texture; null alongside MapPixelPosition.
     string? MapTexturePath = null,
-    // Raw world X/Z (not map-pixel space) - used only to find which fishing
-    // hole the player is nearest to within their current territory, for the
-    // "open to where I'm standing" auto-navigate on the journal's first open.
+    // The hole's world X/Z, used to find the nearest hole to the player.
     Vector2? WorldPosition = null,
-    // The spot's own FishingSpot.Radius field - used only to size its range
-    // circle on the area map relative to other holes in the same zone (see
-    // NativeJournalWindow.Map.cs's MarkerCircleRawDiameter), not for
-    // anything gameplay-related. 0 for a spot with no usable radius data.
+    // The sheet's Radius, which sizes the hole's range circle on the map.
     int Radius = 0)
 {
     public int CaughtCount => Fish.Count(f => f.IsCaught);
@@ -63,5 +55,5 @@ public sealed record JournalRegion(string Name, bool IsUnlocked, IReadOnlyList<J
     public uint Order => Areas.Count == 0 ? uint.MaxValue : Areas.Min(area => area.Order);
 }
 
-// One named block of catch-condition text for a single fish (bait, time window, weather, and so on).
+// A fish's heading with its catch-condition lines (bait, time, weather and so on).
 public sealed record FishClueSection(string Heading, IReadOnlyList<string> Lines);

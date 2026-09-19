@@ -9,13 +9,17 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.Game.Logic;
 
-public sealed record FishAvailabilityInfo(bool AvailableNow, string BadgeText, string Tooltip);
+// CountingSeconds is true while the badge's countdown is close enough to zero that it needs
+// refreshing every second.
+public sealed record FishAvailabilityInfo(bool AvailableNow, string BadgeText, string Tooltip, bool CountingSeconds = false);
 
 // Turns a fish's time/weather requirements into the "available now" or
 // "waiting for..." badge shown next to it in the journal.
 public sealed class AvailabilityService
 {
     private const int MaxAvailabilityWindowsToScan = 216; // ~3.5 real days of weather windows.
+    // Within this many seconds of the change the countdown is refreshed every second.
+    private const long CountdownRefreshSeconds = 75;
 
     private readonly FishDataService fishData;
     private readonly JournalBuilder journal;
@@ -71,7 +75,8 @@ public sealed class AvailabilityService
             string availableCountdown = end is long endTime
                 ? $"Ends in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, endTime - now)))}"
                 : "Not ending soon";
-            return new FishAvailabilityInfo(true, $"{availableCountdown} | {availableTooltip}", availableTooltip);
+            return new FishAvailabilityInfo(true, $"{availableCountdown} | {availableTooltip}", availableTooltip,
+                end is long endsAt && endsAt - now <= CountdownRefreshSeconds);
         }
 
         string tooltip = formatter.WaitingSentence(condition);
@@ -83,7 +88,8 @@ public sealed class AvailabilityService
         string waitingCountdown = next is long nextTime
             ? $"Starts in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, nextTime - now)))}"
             : "Not starting soon";
-        return new FishAvailabilityInfo(false, $"{waitingCountdown} | {tooltip}", tooltip);
+        return new FishAvailabilityInfo(false, $"{waitingCountdown} | {tooltip}", tooltip,
+            next is long startsAt && startsAt - now <= CountdownRefreshSeconds);
     }
 
     private uint? ResolveTerritoryId(JournalFish fish)
@@ -212,12 +218,11 @@ public sealed class AvailabilityService
 
     private static string FormatCountdown(TimeSpan span)
     {
-        // Read after "Ends in" / "Starts in": "under a minute", "39m", "2h",
-        // "1h 53m", "3d", "2d 4h" - a zero trailing unit is dropped.
-        if (span.TotalMinutes < 1) return "under a minute";
+        // Read after "Ends in" / "Starts in": "45s", "39m", "2h", "1h 53m", "3d", "2d 4h".
+        // A zero trailing unit is dropped.
+        if (span.TotalMinutes < 1) return $"{(int)Math.Ceiling(span.TotalSeconds)}s";
         if (span.TotalHours < 1) return $"{span.Minutes}m";
         if (span.TotalDays < 1) return span.Minutes == 0 ? $"{(int)span.TotalHours}h" : $"{(int)span.TotalHours}h {span.Minutes}m";
         return span.Hours == 0 ? $"{(int)span.TotalDays}d" : $"{(int)span.TotalDays}d {span.Hours}h";
     }
-
 }

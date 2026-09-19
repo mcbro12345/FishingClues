@@ -1,27 +1,28 @@
-using Dalamud.Game.NativeWrapper;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using Dalamud.Game.NativeWrapper;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using FishParameterSheet = Lumina.Excel.Sheets.FishParameter;
 using FishingSpotSheet = Lumina.Excel.Sheets.FishingSpot;
 using ItemSheet = Lumina.Excel.Sheets.Item;
-using MapSheet = Lumina.Excel.Sheets.Map;
 using PlaceNameSheet = Lumina.Excel.Sheets.PlaceName;
+using TerritoryTypeSheet = Lumina.Excel.Sheets.TerritoryType;
 
 using FishingClues.Base;
 using FishingClues.Game.Models;
 
 namespace FishingClues.Game.Data;
 
-// Builds the region/area/spot tree the journal and guide windows draw from,
-// and tracks per-character reveal state (both ours and whatever the vanilla
-// Fishing Log has already shown the player).
+// Builds the region / area / fishing hole tree the journal and guide draw from,
+// and tracks which fish and regions the player has seen revealed.
 public sealed class JournalBuilder
 {
+    private const long JournalCacheMs = 2000;
+    private const long FishRevealScanIntervalMs = 500;
     private static readonly string[] RegionOrder =
     [
         "La Noscea", "The Black Shroud", "Thanalan", "Coerthas", "Mor Dhona",
@@ -38,28 +39,16 @@ public sealed class JournalBuilder
     private long lastJournalBuild;
     private ulong journalCharacterId;
     private long nextFishRevealScan;
-    // Tracks which fishing holes were unlocked as of the last build, so a hole
-    // that flips from locked to unlocked between builds can be surfaced once
-    // to the journal window as "just discovered". Null means this character
-    // hasn't had a first build yet - that first build seeds the set without
-    // treating every already-unlocked hole as newly discovered.
+    // The holes that were unlocked at the last build, so one that flips to
+    // unlocked can be reported once as "just discovered". Null until the first
+    // build, which only seeds it.
     private HashSet<uint>? knownUnlockedSpots;
 
-    // Set the moment a hole is seen flipping to unlocked; consumed (and
-    // cleared) the next time the journal window is opened, so it always
-    // reflects "discovered since you last opened the log", not merely
-    // "discovered since the last 2-second cache refresh".
+    // A hole seen becoming unlocked since the journal window was last opened.
     public uint? PendingDiscoveredSpotId { get; private set; }
 
-    public uint? ConsumePendingDiscoveredSpot()
-    {
-        uint? id = PendingDiscoveredSpotId;
-        PendingDiscoveredSpotId = null;
-        return id;
-    }
-
-    // Fired when the logged-in character changes, so other services can drop
-    // their own per-character transient state (e.g. a pending log-replacement).
+    // Raised when the logged-in character changes, so other services can drop
+    // their per-character state.
     public event Action? CharacterChanged;
 
     public JournalBuilder(FishDataService fishData, Configuration configuration)
@@ -67,6 +56,13 @@ public sealed class JournalBuilder
         this.fishData = fishData;
         this.configuration = configuration;
         fishData.DataRefreshed += () => journalCache = null;
+    }
+
+    public uint? ConsumePendingDiscoveredSpot()
+    {
+        uint? id = PendingDiscoveredSpotId;
+        PendingDiscoveredSpotId = null;
+        return id;
     }
 
     public void InvalidateCache()
@@ -78,133 +74,107 @@ public sealed class JournalBuilder
     public unsafe IReadOnlyList<JournalRegion> GetJournal()
     {
         ResetJournalCharacter();
-        if (journalCache is not null && Environment.TickCount64 - lastJournalBuild < 2000)
+        if (journalCache is not null && Environment.TickCount64 - lastJournalBuild < JournalCacheMs)
             return journalCache;
 
-        FishDataFile data = fishData.Data;
-        var spots = new List<JournalSpot>();
         PlayerState* player = PlayerState.Instance();
         byte* caught = player == null ? null : player->CaughtFishBitArray.Pointer;
-        var fishSheet = Services.DataManager.GetExcelSheet<FishParameterSheet>();
-        var itemSheet = Services.DataManager.GetExcelSheet<ItemSheet>();
-        var fishByItemId = fishSheet
+        var fishByItemId = Services.DataManager.GetExcelSheet<FishParameterSheet>()
             .Where(fish => fish.Item.RowId != 0)
             .GroupBy(fish => fish.Item.RowId)
             .ToDictionary(group => group.Key, group => group.First());
 
+        var spots = new List<JournalSpot>();
         foreach (FishingSpotSheet spot in Services.DataManager.GetExcelSheet<FishingSpotSheet>())
         {
             if (spot.PlaceName.RowId == 0 || (spot.TerritoryType.RowId == 0 && spot.RowId != 10000 && spot.RowId < 10017))
                 continue;
-
-            var entries = new List<JournalFish>();
-            foreach (var fishReference in spot.Item)
-            {
-                uint itemId = fishReference.RowId;
-                if (itemId == 0 || !fishByItemId.TryGetValue(itemId, out FishParameterSheet fish))
-                    continue;
-                uint fishId = fish.RowId;
-                FishInfo? info = data.Info.GetValueOrDefault(itemId);
-                bool hasItem = itemSheet.TryGetRow(itemId, out ItemSheet item);
-                string fishName = hasItem ? item.Name.ToString() : info?.Name ?? $"Fish #{itemId}";
-                uint icon = hasItem ? item.Icon : info?.Icon ?? 0;
-                bool caughtFlag = configuration.DebugRevealEverything || IsCaught(caught, fishId);
-                entries.Add(new JournalFish(fishId, itemId, spot.GatheringLevel, caughtFlag, fishName, icon, info, spot.RowId,
-                    configuration.RevealedFish.TryGetValue(journalCharacterId, out var revealed) && revealed.Contains(fishId)));
-            }
-            if (entries.Count == 0)
-                continue;
-
-            var territoryRow = spot.TerritoryType.ValueNullable;
-            FishInfo? locationInfo = entries.Select(e => e.Info).FirstOrDefault(i => i is not null && !string.IsNullOrWhiteSpace(i.Region));
-            string territory = territoryRow?.PlaceName.ValueNullable?.Name.ToString() ?? "Other";
-            string region = spot.PlaceNameMain.ValueNullable?.Name.ToString() ?? string.Empty;
-            string area = spot.PlaceNameSub.ValueNullable?.Name.ToString() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(area)) area = territory;
-            if (string.IsNullOrWhiteSpace(region))
-                region = territoryRow?.PlaceNameRegion.ValueNullable?.Name.ToString() ?? locationInfo?.Region ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(region) || region.Equals("Other", StringComparison.OrdinalIgnoreCase))
-            {
-                string? mappedRegion = null;
-                if (!fishData.RegionByZone.TryGetValue(area, out mappedRegion))
-                    fishData.RegionByZone.TryGetValue(territory, out mappedRegion);
-                region = mappedRegion ?? RegionFromKnownArea(area);
-            }
-            string spotName = spot.PlaceName.ValueNullable?.Name.ToString() ?? $"Fishing Hole #{spot.RowId}";
-            uint mapId = territoryRow?.Map.RowId ?? 0;
-            uint order = spot.Order;
-            bool isUnlocked = configuration.DebugRevealEverything || IsFishingHoleDiscovered(player, spot.RowId);
-            ushort regionPlaceNameId = (ushort)(spot.PlaceNameMain.RowId != 0
-                ? spot.PlaceNameMain.RowId : territoryRow?.PlaceNameRegion.RowId ?? 0);
-            ushort spotPlaceNameId = (ushort)spot.PlaceName.RowId;
-            MapSheet? mapRow = territoryRow?.Map.ValueNullable;
-            (Vector2? mapPixel, string? mapTexturePath) = BuildMapInfo(mapRow, spot.X, spot.Z);
-            spots.Add(new JournalSpot(spot.RowId, spotName, area, region, spot.TerritoryType.RowId, mapId,
-                order, isUnlocked, regionPlaceNameId, spotPlaceNameId, entries, mapPixel, mapTexturePath,
-                new Vector2(spot.X, spot.Z), spot.Radius));
+            var entries = BuildFishEntries(spot, fishByItemId, caught);
+            if (entries.Count == 0) continue;
+            spots.Add(BuildSpot(spot, entries, player));
         }
 
         if (!configuration.DebugRevealEverything)
             UpdateDiscoveryTracking(spots);
 
-        journalCache = spots.GroupBy(s => s.Region)
+        journalCache = GroupIntoRegions(spots);
+        lastJournalBuild = Environment.TickCount64;
+        return journalCache;
+    }
+
+    private unsafe List<JournalFish> BuildFishEntries(FishingSpotSheet spot, Dictionary<uint, FishParameterSheet> fishByItemId, byte* caught)
+    {
+        var itemSheet = Services.DataManager.GetExcelSheet<ItemSheet>();
+        configuration.RevealedFish.TryGetValue(journalCharacterId, out var revealed);
+        var entries = new List<JournalFish>();
+        foreach (var fishReference in spot.Item)
+        {
+            uint itemId = fishReference.RowId;
+            if (itemId == 0 || !fishByItemId.TryGetValue(itemId, out FishParameterSheet fish))
+                continue;
+            FishInfo? info = fishData.Data.Info.GetValueOrDefault(itemId);
+            bool hasItem = itemSheet.TryGetRow(itemId, out ItemSheet item);
+            string name = hasItem ? item.Name.ToString() : info?.Name ?? $"Fish #{itemId}";
+            uint icon = hasItem ? item.Icon : info?.Icon ?? 0;
+            bool isCaught = configuration.DebugRevealEverything || IsCaught(caught, fish.RowId);
+            entries.Add(new JournalFish(fish.RowId, itemId, spot.GatheringLevel, isCaught, name, icon, info, spot.RowId,
+                revealed is not null && revealed.Contains(fish.RowId)));
+        }
+        return entries;
+    }
+
+    private unsafe JournalSpot BuildSpot(FishingSpotSheet spot, List<JournalFish> entries, PlayerState* player)
+    {
+        var territoryRow = spot.TerritoryType.ValueNullable;
+        (string region, string area) = ResolveRegionAndArea(spot, territoryRow, entries);
+        string name = spot.PlaceName.ValueNullable?.Name.ToString() ?? $"Fishing Hole #{spot.RowId}";
+        bool isUnlocked = configuration.DebugRevealEverything || IsFishingHoleDiscovered(player, spot.RowId);
+        ushort regionPlaceNameId = (ushort)(spot.PlaceNameMain.RowId != 0
+            ? spot.PlaceNameMain.RowId : territoryRow?.PlaceNameRegion.RowId ?? 0);
+        // FishingSpot.X and Z are already pixel positions on the 2048x2048 map
+        // texture (1024,1024 is the centre), so no world-to-map conversion applies.
+        var map = territoryRow?.Map.ValueNullable;
+        bool hasMap = map is { RowId: not 0 };
+        Vector2? mapPixel = hasMap ? new Vector2(spot.X, spot.Z) : null;
+        string? mapTexturePath = hasMap ? MapTextures.PathFor(map!.Value) : null;
+        return new JournalSpot(spot.RowId, name, area, region, spot.TerritoryType.RowId, territoryRow?.Map.RowId ?? 0,
+            spot.Order, isUnlocked, regionPlaceNameId, (ushort)spot.PlaceName.RowId, entries, mapPixel, mapTexturePath,
+            new Vector2(spot.X, spot.Z), spot.Radius);
+    }
+
+    // The sheet's region and area names are often blank, so fall back through the
+    // territory, the fish data's own zone info, and finally a name match.
+    private (string Region, string Area) ResolveRegionAndArea(FishingSpotSheet spot, TerritoryTypeSheet? territoryRow, List<JournalFish> entries)
+    {
+        string territory = territoryRow?.PlaceName.ValueNullable?.Name.ToString() ?? "Other";
+        string region = spot.PlaceNameMain.ValueNullable?.Name.ToString() ?? string.Empty;
+        string area = spot.PlaceNameSub.ValueNullable?.Name.ToString() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(area)) area = territory;
+        if (string.IsNullOrWhiteSpace(region))
+        {
+            FishInfo? locationInfo = entries.Select(e => e.Info).FirstOrDefault(i => i is not null && !string.IsNullOrWhiteSpace(i.Region));
+            region = territoryRow?.PlaceNameRegion.ValueNullable?.Name.ToString() ?? locationInfo?.Region ?? string.Empty;
+        }
+        if (string.IsNullOrWhiteSpace(region) || region.Equals("Other", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!fishData.RegionByZone.TryGetValue(area, out string? mappedRegion))
+                fishData.RegionByZone.TryGetValue(territory, out mappedRegion);
+            region = mappedRegion ?? RegionFromKnownArea(area);
+        }
+        return (region, area);
+    }
+
+    private IReadOnlyList<JournalRegion> GroupIntoRegions(List<JournalSpot> spots)
+        => spots.GroupBy(s => s.Region)
             .OrderBy(g => RegionIndex(g.Key)).ThenBy(g => g.Min(s => s.Order)).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
             .Select(region => new JournalRegion(region.Key,
                 region.Any(spot => FishingDiscovery.IsRegionNameVisible(spot.RegionPlaceNameId,
                     spot.IsUnlocked, vanillaRevealedRegions.Contains(spot.RegionPlaceNameId))),
                 region.GroupBy(s => s.Area)
-                .OrderBy(area => area.Min(s => s.Order)).ThenBy(area => area.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(area => new JournalArea(area.Key, area.OrderBy(s => s.Order).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToArray()))
-                .ToArray()))
+                    .OrderBy(area => area.Min(s => s.Order)).ThenBy(area => area.Key, StringComparer.OrdinalIgnoreCase)
+                    .Select(area => new JournalArea(area.Key, area.OrderBy(s => s.Order).ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase).ToArray()))
+                    .ToArray()))
             .ToArray();
-        lastJournalBuild = Environment.TickCount64;
-        return journalCache;
-    }
-
-    // Resolves a fishing hole's pixel position on its area's 2048x2048 map
-    // texture (1024,1024 = center), plus the game path of that map's own
-    // texture.
-    //
-    // FishingSpot.X/Z are NOT a live world position in yalms - unlike an
-    // actual player/object position, they come pre-baked as a map-texture
-    // pixel coordinate already (per xivapi/ffxiv-datamining's
-    // MapCoordinates.md, which names FishingSpot specifically as an example
-    // of this: "conversion of map texture pixel coordinates (such as
-    // FishingSpot coordinates) to in-game 2D map coordinates"). So they can
-    // be used directly as the pixel position on the 2048x2048 texture with
-    // no further math - no SizeFactor/Offset scaling, and no world->map
-    // conversion (Dalamud's MapUtil.WorldToMap) involved at all; that call
-    // is for converting an actual live position (e.g. the player's own X/Z)
-    // and produces nonsense here, which is what previously sent markers
-    // wildly outside the visible map (pixel values in the thousands instead
-    // of the expected 0-2048 range). If a marker looks visibly off in the
-    // future, this assumption - that these particular sheet fields are
-    // already pixel-space - is the first thing to re-check, not the pixel
-    // formula itself.
-    //
-    // The texture path always uses the base "_m.tex" name, never
-    // "_m_hr1.tex" - KamiToolKit's own LoadTexture strips any "_hr1" suffix
-    // itself and lets the game pick the right resolution variant, so passing
-    // one in has no effect either way; a live /xllog capture showing
-    // Penumbra fail to load "..._m_hr1.tex" for zones the player visited was
-    // the game's own automatic high-res upgrade attempt, not evidence our
-    // own path was wrong. If the map image still doesn't render, the next
-    // thing to check is whether this exact path passes IDataManager's
-    // FileExists check (see the debug log line in EnsureMapTexture).
-    private static (Vector2? Pixel, string? TexturePath) BuildMapInfo(MapSheet? map, short spotPixelX, short spotPixelZ)
-    {
-        if (map is not MapSheet mapRow || mapRow.RowId == 0)
-            return (null, null);
-
-        var pixel = new Vector2(spotPixelX, spotPixelZ);
-
-        string id = mapRow.Id.ToString();
-        int slash = id.IndexOf('/');
-        string? texturePath = slash > 0 && slash < id.Length - 1
-            ? $"ui/map/{id[..slash]}/{id[(slash + 1)..]}/{id[..slash]}{id[(slash + 1)..]}_m.tex"
-            : null;
-        return (pixel, texturePath);
-    }
 
     private unsafe void ResetJournalCharacter()
     {
@@ -219,25 +189,23 @@ public sealed class JournalBuilder
         CharacterChanged?.Invoke();
     }
 
-    // Diffs this build's unlocked holes against the last build's. The first
-    // build for a character only seeds the baseline - everything already
-    // unlocked at that point is not "new". After that, any hole flipping to
-    // unlocked becomes the pending discovery (last one wins if more than one
-    // flipped between builds, which in practice means "most recent").
+    // Compares this build's unlocked holes with the last build's. The first build
+    // only seeds the baseline; after that a hole becoming unlocked is the pending
+    // discovery (the latest one, if several changed at once).
     private void UpdateDiscoveryTracking(List<JournalSpot> spots)
     {
         var currentUnlocked = new HashSet<uint>(spots.Where(s => s.IsUnlocked).Select(s => s.Id));
         if (knownUnlockedSpots is not null)
         {
             foreach (uint id in currentUnlocked)
-            {
                 if (!knownUnlockedSpots.Contains(id))
                     PendingDiscoveredSpotId = id;
-            }
         }
         knownUnlockedSpots = currentUnlocked;
     }
 
+    // Watches the vanilla Fishing Log while it is open, to learn which region
+    // names and fish it has revealed to the player.
     public unsafe void ObserveVanillaRegionLabels()
     {
         ResetJournalCharacter();
@@ -246,7 +214,7 @@ public sealed class JournalBuilder
         if (ptr.IsNull || !ptr.IsVisible || agent == null || agent->Mode != 0) return;
         ObserveRevealedFish(agent, (AtkUnitBase*)ptr.Address);
         var places = Services.DataManager.GetExcelSheet<PlaceNameSheet>();
-        foreach (ushort id in new ushort[] { 3704, 3705, 4502 })
+        foreach (ushort id in FishingDiscovery.HiddenRegionPlaceNameIds)
         {
             if (vanillaRevealedRegions.Contains(id) || !places.TryGetRow(id, out var place)) continue;
             string name = place.Name.ToString();
@@ -261,8 +229,9 @@ public sealed class JournalBuilder
     private unsafe void ObserveRevealedFish(AgentFishingNote* agent, AtkUnitBase* addon)
     {
         if (journalCharacterId == 0 || Environment.TickCount64 < nextFishRevealScan) return;
-        nextFishRevealScan = Environment.TickCount64 + 500;
+        nextFishRevealScan = Environment.TickCount64 + FishRevealScanIntervalMs;
         var fishSheet = Services.DataManager.GetExcelSheet<FishParameterSheet>();
+        var itemSheet = Services.DataManager.GetExcelSheet<ItemSheet>();
         if (!configuration.RevealedFish.TryGetValue(journalCharacterId, out var revealed))
             configuration.RevealedFish[journalCharacterId] = revealed = new HashSet<uint>();
         bool changed = false;
@@ -271,8 +240,9 @@ public sealed class JournalBuilder
         {
             uint id = agent->FishSlots[i].Id;
             if (id == 0 || revealed.Contains(id) || !fishSheet.TryGetRow(id, out var fish)) continue;
-            var itemSheet = Services.DataManager.GetExcelSheet<ItemSheet>();
-            string name = itemSheet.TryGetRow(fish.Item.RowId, out var item) ? item.Name.ToString() : fishData.Data.Items.GetValueOrDefault(fish.Item.RowId, $"Item #{fish.Item.RowId}");
+            string name = itemSheet.TryGetRow(fish.Item.RowId, out var item)
+                ? item.Name.ToString()
+                : fishData.Data.Items.GetValueOrDefault(fish.Item.RowId, $"Item #{fish.Item.RowId}");
             if (FishingNoteAddon.IsNameVisible(addon, name)) changed |= revealed.Add(id);
         }
         if (changed)
@@ -282,16 +252,9 @@ public sealed class JournalBuilder
         }
     }
 
-    // Finds where the player actually is right now among the built journal
-    // tree, for the "open to where I'm standing" auto-navigate on the very
-    // first time the journal window is opened in a session. Matches by the
-    // player's current territory (which maps 1:1 onto a single JournalArea),
-    // then - among that area's unlocked holes - by whichever is physically
-    // closest to the player, so "the fishing hole you are at" means the
-    // nearest one, not just any hole in the zone. Returns nulls for the area
-    // and region too if the player isn't in any zone this journal tracks, and
-    // a null spot (area/region still filled in) if the zone has no unlocked
-    // hole yet - the caller then just opens the area with nothing selected.
+    // Where the player is now, for opening the journal at their location: the
+    // region and area of the current zone, and the nearest unlocked hole in it
+    // (null if the zone has none). All null if the zone isn't in the journal.
     public static (JournalRegion? Region, JournalArea? Area, JournalSpot? Spot) LocateCurrentLocation(IReadOnlyList<JournalRegion> regions)
     {
         uint territory = Services.ClientState.TerritoryType;

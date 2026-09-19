@@ -1,5 +1,5 @@
 using System;
-using System.Linq;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.ClientState.Keys;
@@ -26,141 +26,108 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
 
     public override void Draw()
     {
+        DrawJournalSettings();
+        Section("DIVIDER LOCK");
+        Toggle("Lock the fish / details divider", configuration.LockJournalDividers, v => configuration.LockJournalDividers = v,
+            SaveLayout, "Uncheck to resize the fish / details divider directly in the journal or fish search.");
+        Section("FISHING DATA");
+        DrawFishingDataSettings();
+        Section("DEBUG");
+        DrawDebugSettings();
+    }
+
+    private void DrawJournalSettings()
+    {
         ImGui.TextDisabled("JOURNAL");
-        bool replace = configuration.ReplaceNormalFishingLog;
-        if (ImGui.Checkbox("Replace the normal Fishing Log", ref replace))
+        Toggle("Replace the normal Fishing Log", configuration.ReplaceNormalFishingLog, v =>
         {
-            configuration.ReplaceNormalFishingLog = replace;
-            save();
-        }
-        if (replace) capturingKeybind = false;
-        ImGui.BeginDisabled(replace);
-        bool keybindEnabled = configuration.JournalKeybindEnabled;
-        if (ImGui.Checkbox("Open the custom journal with a keybind", ref keybindEnabled))
+            configuration.ReplaceNormalFishingLog = v;
+            if (v) capturingKeybind = false;
+        }, save);
+        ImGui.BeginDisabled(configuration.ReplaceNormalFishingLog);
+        Toggle("Open the custom journal with a keybind", configuration.JournalKeybindEnabled, v =>
         {
-            configuration.JournalKeybindEnabled = keybindEnabled;
+            configuration.JournalKeybindEnabled = v;
             capturingKeybind = false;
-            save();
-        }
-        if (keybindEnabled)
+        }, save);
+        if (configuration.JournalKeybindEnabled)
         {
             ImGui.Indent();
             DrawKeybindCapture();
             ImGui.Unindent();
         }
         ImGui.EndDisabled();
-        bool showButton = configuration.ShowOpenNormalLogButton;
-        if (ImGui.Checkbox("Show the normal Fishing Log button", ref showButton))
-        {
-            configuration.ShowOpenNormalLogButton = showButton;
-            SaveLayout();
-        }
-        bool showAreaMap = configuration.ShowAreaLocationMap;
-        if (ImGui.Checkbox("Show the area location map", ref showAreaMap))
-        {
-            configuration.ShowAreaLocationMap = showAreaMap;
-            SaveLayout();
-        }
-        DrawWrappedHint("Shows a map under the area list for the area you have open, so you can click a fishing hole directly on it.");
-        bool disableCountdown = configuration.DisableAvailabilityCountdown;
-        if (ImGui.Checkbox("Disable the availability countdown timer", ref disableCountdown))
-        {
-            configuration.DisableAvailabilityCountdown = disableCountdown;
-            SaveLayout();
-        }
-        bool use12Hour = configuration.Use12HourTime;
-        if (ImGui.Checkbox("Show times in 12-hour format", ref use12Hour))
-        {
-            configuration.Use12HourTime = use12Hour;
-            SaveLayout();
-        }
-        DrawWrappedHint("Applies to catch time windows everywhere they're shown, not just the countdown.");
-        bool uncaughtFirst = configuration.UncaughtFishFirst;
-        if (ImGui.Checkbox("Uncaught fish first", ref uncaughtFirst))
-        {
-            configuration.UncaughtFishFirst = uncaughtFirst;
-            SaveLayout();
-        }
-        bool sortBait = configuration.SortBaitByItemLevel;
-        if (ImGui.Checkbox("Sort bait by item level (highest first)", ref sortBait))
-        {
-            configuration.SortBaitByItemLevel = sortBait;
-            SaveLayout();
-        }
-        DrawWrappedHint("Orders the bait lists in a fish's details from the highest item level to the lowest. Applies the next time you open a fish's details.");
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.TextDisabled("DIVIDER LOCK");
-        bool locked = configuration.LockJournalDividers;
-        if (ImGui.Checkbox("Lock the fish / details divider", ref locked))
-        {
-            configuration.LockJournalDividers = locked;
-            SaveLayout();
-        }
-        DrawWrappedHint("Uncheck to resize the fish / details divider directly in the journal or fish search.");
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.TextDisabled("FISHING DATA");
-        bool autoRefresh = configuration.AutoRefreshFishData;
-        if (ImGui.Checkbox("Check for fishing data updates daily", ref autoRefresh))
-        {
-            configuration.AutoRefreshFishData = autoRefresh;
-            save();
-        }
+        Toggle("Show the normal Fishing Log button", configuration.ShowOpenNormalLogButton, v => configuration.ShowOpenNormalLogButton = v, SaveLayout);
+        Toggle("Show the area location map", configuration.ShowAreaLocationMap, v => configuration.ShowAreaLocationMap = v, SaveLayout,
+            "Shows a map under the area list for the area you have open, so you can click a fishing hole directly on it.");
+        Toggle("Disable the availability countdown timer", configuration.DisableAvailabilityCountdown, v => configuration.DisableAvailabilityCountdown = v, SaveLayout);
+        Toggle("Show times in 12-hour format", configuration.Use12HourTime, v => configuration.Use12HourTime = v, SaveLayout,
+            "Applies to catch time windows everywhere they're shown, not just the countdown.");
+        Toggle("Uncaught fish first", configuration.UncaughtFishFirst, v => configuration.UncaughtFishFirst = v, SaveLayout);
+        Toggle("Sort bait by item level (highest first)", configuration.SortBaitByItemLevel, v => configuration.SortBaitByItemLevel = v, SaveLayout,
+            "Orders the bait lists in a fish's details from the highest item level to the lowest. Applies the next time you open a fish's details.");
+    }
+
+    private void DrawFishingDataSettings()
+    {
+        Toggle("Check for fishing data updates daily", configuration.AutoRefreshFishData, v => configuration.AutoRefreshFishData = v, save);
         ImGui.BeginDisabled(refreshBusy());
         if (ImGui.Button("Refresh fishing data now")) refreshData();
         ImGui.EndDisabled();
         ImGui.TextWrapped(refreshStatus());
         ImGui.TextWrapped("Downloads catch conditions from Fish Tracker and GatherBuddy. New discoveries appear when their maintainers publish them.");
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.TextDisabled("DEBUG");
+    }
+
+    private void DrawDebugSettings()
+    {
         if (ImGui.Button("Open diagnostic report")) openDiagnostics();
         ImGui.Spacing();
-        bool debugMode = configuration.DebugMode;
-        if (ImGui.Checkbox("Debug Mode", ref debugMode))
-        {
-            configuration.DebugMode = debugMode;
-            save();
-        }
-        if (debugMode)
-        {
-            ImGui.Indent();
-            bool revealEverything = configuration.DebugRevealEverything;
-            if (ImGui.Checkbox("Show every location and fish as unlocked", ref revealEverything))
+        Toggle("Debug Mode", configuration.DebugMode, v => configuration.DebugMode = v, save);
+        if (!configuration.DebugMode) return;
+
+        ImGui.Indent();
+        Toggle("Show every location and fish as unlocked", configuration.DebugRevealEverything, v => configuration.DebugRevealEverything = v,
+            () =>
             {
-                configuration.DebugRevealEverything = revealEverything;
                 save();
                 refreshJournalContents();
-            }
-            DrawWrappedHint("Testing only. While on, every fishing hole shows as discovered and every fish as caught; turn it off to go back to your real progress.");
+            },
+            "Testing only. While on, every fishing hole shows as discovered and every fish as caught; turn it off to go back to your real progress.");
 
-            ImGui.Spacing();
-            bool unlockRegionDivider = !configuration.LockRegionDivider;
-            if (ImGui.Checkbox("Unlock the region column divider", ref unlockRegionDivider))
-            {
-                configuration.LockRegionDivider = !unlockRegionDivider;
-                SaveLayout();
-            }
-            if (ImGui.Button("Restore default region divider position##RegionWidthDefault"))
-            {
-                configuration.NativeRegionWidth = DefaultRegionWidth;
-                SaveLayout();
-            }
-            bool unlockAreaDivider = !configuration.LockAreaDivider;
-            if (ImGui.Checkbox("Unlock the area column divider", ref unlockAreaDivider))
-            {
-                configuration.LockAreaDivider = !unlockAreaDivider;
-                SaveLayout();
-            }
-            if (ImGui.Button("Restore default area divider position##AreaWidthDefault"))
-            {
-                configuration.NativeAreaWidth = DefaultAreaWidth;
-                SaveLayout();
-            }
-            DrawWrappedHint("Lets you drag the region and area column edges directly in the journal, the same way the fish / details divider already works.");
-            ImGui.Unindent();
+        ImGui.Spacing();
+        Toggle("Unlock the region column divider", !configuration.LockRegionDivider, v => configuration.LockRegionDivider = !v, SaveLayout);
+        if (ImGui.Button("Restore default region divider position##RegionWidthDefault"))
+        {
+            configuration.NativeRegionWidth = DefaultRegionWidth;
+            SaveLayout();
         }
+        Toggle("Unlock the area column divider", !configuration.LockAreaDivider, v => configuration.LockAreaDivider = !v, SaveLayout);
+        if (ImGui.Button("Restore default area divider position##AreaWidthDefault"))
+        {
+            configuration.NativeAreaWidth = DefaultAreaWidth;
+            SaveLayout();
+        }
+        DrawWrappedHint("Lets you drag the region and area column edges directly in the journal, the same way the fish / details divider already works.");
+        ImGui.Unindent();
+    }
+
+    private static void Section(string title)
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextDisabled(title);
+    }
+
+    // A checkbox that applies its new value and then commits it (save, or save and re-lay out the journal).
+    private static void Toggle(string label, bool current, Action<bool> apply, Action commit, string? hint = null)
+    {
+        bool value = current;
+        if (ImGui.Checkbox(label, ref value))
+        {
+            apply(value);
+            commit();
+        }
+        if (hint is not null) DrawWrappedHint(hint);
     }
 
     private void DrawKeybindCapture()
@@ -200,7 +167,7 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
     private string DescribeKeybind()
     {
         if (configuration.JournalKeybindKey == 0) return "Click to set keybind";
-        var parts = new System.Collections.Generic.List<string>();
+        var parts = new List<string>();
         if (configuration.JournalKeybindCtrl) parts.Add("Ctrl");
         if (configuration.JournalKeybindAlt) parts.Add("Alt");
         if (configuration.JournalKeybindShift) parts.Add("Shift");

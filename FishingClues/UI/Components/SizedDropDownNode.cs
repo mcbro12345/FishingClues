@@ -17,6 +17,7 @@ public sealed class SizedDropDownNode<T> : DropDownNode<T>
         if (SelectedOption is not null && GetLabelFunction is not null) LabelNode.String = GetLabelFunction(SelectedOption);
         ResizePopup();
     }
+
     private N? Part<N>(string name) where N : NodeBase => typeof(DropDownNode<T>).GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(this) as N;
     public void ResizePopup()
     {

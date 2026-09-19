@@ -144,6 +144,7 @@ public static class FishDataRefresh
         Validate(result);
         return result;
     }
+
     private static async Task<string> DownloadBaitRecords(HttpClient client, CancellationToken token)
     {
         // Read only aggregated catch evidence, never player/user records.

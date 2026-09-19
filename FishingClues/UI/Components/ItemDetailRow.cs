@@ -10,9 +10,11 @@ using FishingClues.Game.Logic;
 namespace FishingClues.UI.Components;
 
 // One line of a fish's details. A "Label: contents" line is laid out like the
-// game's own settings pages: the label as a larger, lighter title on its own
-// row, with the contents (item links and all) indented underneath it and
-// wrapping at that indent. A line with no label is just its contents.
+// game's own settings pages: the label as a lighter title on its own row, with
+// the contents (item links and all) indented underneath it and wrapping at that
+// indent. A line with no label is just its contents.
+//
+// SetContent refills the row with another line, reusing its nodes where it can.
 public sealed class ItemDetailRow : ResNode
 {
     private const float LineHeight = 18.0f;
@@ -24,27 +26,68 @@ public sealed class ItemDetailRow : ResNode
     private const uint TitleFontSize = 14;
 
     private static readonly Vector4 TitleColor = new(0.93f, 0.93f, 0.93f, 1.0f);
+    private static readonly Vector4 LinkColor = new(0.55f, 0.82f, 1.0f, 1.0f);
+    private static readonly Vector4 LinkHoverColor = Vector4.One;
 
     private readonly List<LabelTextNode> segments = new();
-    private readonly LabelTextNode? title;
+    // The item each segment links to, 0 for plain text.
+    private readonly Dictionary<LabelTextNode, uint> segmentItems = new();
+    private LabelTextNode? title;
     private bool layingOut;
-
-    // Height of one line of contents; grows with a larger font (see the fontSize argument).
-    private readonly float lineHeight = LineHeight;
+    // Height of one line of contents; grows with a larger font.
+    private float lineHeight = LineHeight;
 
     public ItemDetailRow(string text, IReadOnlyDictionary<string, uint> links, uint fontSize = 14, FontType? fontType = null)
+    {
+        Width = 450;
+        SetContent(text, links, fontSize, fontType);
+    }
+
+    public void SetContent(string text, IReadOnlyDictionary<string, uint> links, uint fontSize = 14, FontType? fontType = null)
     {
         lineHeight = LineHeight + (fontSize - 14) * 1.5f;
         int colon = text.IndexOf(':');
         if (colon > 0)
         {
-            title = new LabelTextNode { String = text[..colon], FontSize = TitleFontSize, Height = TitleHeight, Width = 1000 };
-            title.TextColor = TitleColor;
-            title.Width = Math.Max(1, title.GetTextDrawSize(false).X + 2);
-            title.AttachNode(this);
+            SetTitle(text[..colon]);
             text = text[(colon + 1)..].TrimStart();
         }
+        else if (title is not null)
+        {
+            title.Dispose();
+            title = null;
+        }
 
+        var pieces = SplitIntoSegments(text, links);
+        for (int i = 0; i < pieces.Count; i++)
+        {
+            LabelTextNode node = i < segments.Count ? segments[i] : CreateSegment();
+            ConfigureSegment(node, pieces[i].Text, pieces[i].ItemId, fontSize, fontType);
+        }
+        for (int i = segments.Count - 1; i >= pieces.Count; i--)
+        {
+            segmentItems.Remove(segments[i]);
+            segments[i].Dispose();
+            segments.RemoveAt(i);
+        }
+        Layout();
+    }
+
+    private void SetTitle(string text)
+    {
+        if (title is null)
+        {
+            title = new LabelTextNode { FontSize = TitleFontSize, Height = TitleHeight, Width = 1000, TextColor = TitleColor };
+            title.AttachNode(this);
+        }
+        title.String = text;
+        title.Width = Math.Max(1, title.GetTextDrawSize(false).X + 2);
+    }
+
+    // Splits a line into words and item names, each piece being one node.
+    private static List<(string Text, uint ItemId)> SplitIntoSegments(string text, IReadOnlyDictionary<string, uint> links)
+    {
+        var pieces = new List<(string, uint)>();
         while (text.Length > 0) {
             var match = links.Where(p => text.StartsWith(p.Key, StringComparison.Ordinal))
                 .OrderByDescending(p => p.Key.Length).FirstOrDefault();
@@ -57,31 +100,50 @@ public sealed class ItemDetailRow : ResNode
             if (match.Key is null) {
                 while (length < text.Length && !char.IsWhiteSpace(text[length - 1]) && !links.Keys.Any(k => text.AsSpan(length).StartsWith(k, StringComparison.Ordinal))) length++;
             }
-            var node = new LabelTextNode { String = text[..length], FontSize = fontSize, Height = lineHeight, Width = 1000 };
-            if (fontType is FontType font) node.FontType = font;
-            // Words are placed one after another, each measured with its trailing space,
-            // so no extra padding is added (it made the gaps between words too wide).
-            node.Width = Math.Max(1, node.GetTextDrawSize(false).X - 1);
-            if (match.Key is not null) {
-                node.ItemTooltip = match.Value;
-                var normal = new Vector4(0.55f, 0.82f, 1, 1);
-                node.TextColor = normal;
-                node.ShowClickableCursor = true;
-                node.AddEvent(AtkEventType.MouseOver, () => node.TextColor = new Vector4(1, 1, 1, 1));
-                node.AddEvent(AtkEventType.MouseOut, () => node.TextColor = normal);
-                uint itemId = match.Value;
-                node.AddEvent(AtkEventType.MouseDown, () => {
-                    if (NativeMouseInput.IsRightButtonHeld()) ItemContextMenuService.RequestItemMenu(itemId);
-                });
-            }
-            node.AttachNode(this);
-            segments.Add(node);
+            pieces.Add((text[..length], match.Key is not null ? match.Value : 0u));
             text = text[length..];
         }
-        Width = 450;
-        Layout();
+        return pieces;
     }
+
+    private LabelTextNode CreateSegment()
+    {
+        var node = new LabelTextNode { Width = 1000 };
+        Vector4 plainColor = node.TextColor;
+        node.AddEvent(AtkEventType.MouseOver, () => { if (IsLink(node)) node.TextColor = LinkHoverColor; });
+        node.AddEvent(AtkEventType.MouseOut, () => node.TextColor = IsLink(node) ? LinkColor : plainColor);
+        node.AddEvent(AtkEventType.MouseDown, () => {
+            if (segmentItems.TryGetValue(node, out uint itemId) && itemId != 0 && NativeMouseInput.IsRightButtonHeld())
+                ItemContextMenuService.RequestItemMenu(itemId);
+        });
+        node.AttachNode(this);
+        segments.Add(node);
+        segmentPlainColors[node] = plainColor;
+        return node;
+    }
+
+    private readonly Dictionary<LabelTextNode, Vector4> segmentPlainColors = new();
+
+    private bool IsLink(LabelTextNode node) => segmentItems.TryGetValue(node, out uint itemId) && itemId != 0;
+
+    private void ConfigureSegment(LabelTextNode node, string text, uint itemId, uint fontSize, FontType? fontType)
+    {
+        segmentItems[node] = itemId;
+        node.String = text;
+        node.FontSize = fontSize;
+        node.FontType = fontType ?? FontType.Axis;
+        node.Height = lineHeight;
+        // Words are placed one after another, each measured with its trailing space,
+        // so no extra padding is added (it made the gaps between words too wide).
+        node.Width = 1000;
+        node.Width = Math.Max(1, node.GetTextDrawSize(false).X - 1);
+        node.ItemTooltip = itemId;
+        node.TextColor = itemId != 0 ? LinkColor : segmentPlainColors[node];
+        node.ShowClickableCursor = itemId != 0;
+    }
+
     protected override void OnSizeChanged() { base.OnSizeChanged(); Layout(); }
+
     private void Layout()
     {
         if (segments is null || layingOut) return;

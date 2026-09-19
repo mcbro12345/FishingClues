@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
 
 using FishingClues.Game.Models;
@@ -21,6 +20,7 @@ public sealed class DalamudClueWindow : Window
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
     }
+
     public override void Draw()
     {
         ImGui.BeginChild("details", Vector2.Zero, true);

@@ -12,11 +12,7 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
     private bool ready;
     public bool RestoreExpandedOnNextTick { get; set; }
 
-    // Set immediately before this header is collapsed programmatically (by
-    // the accordion logic closing every other area when one is opened) so
-    // its own OnToggle(false) handler can tell that apart from the user
-    // trying to manually collapse the one area that's allowed to stay open,
-    // and let it through instead of denying it.
+    // Set just before the header is collapsed in code, so its OnToggle(false) can tell that from the user collapsing the one open area.
     public bool AllowProgrammaticCollapse { get; set; }
     public void InitializeAnimation()
     {
@@ -26,10 +22,7 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
         RecalculateLayout();
     }
 
-    // Only the opening animation is kept (see Tick) - closing snaps shut
-    // instantly instead. This only needs to cover the open direction, and
-    // is shorter than the old shared open/close duration (160ms) so opening
-    // an area feels snappier.
+    // Only opening is animated; closing snaps shut.
     private const float OpenAnimationDurationMs = 90.0f;
 
     public bool Tick()
@@ -49,9 +42,7 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
             started = Environment.TickCount64;
             if (target == 0)
             {
-                // Closing: no animation, snap straight to collapsed so the
-                // area shuts instantly instead of playing the same tween
-                // used for opening.
+                // closing snaps straight to collapsed
                 progress = 0;
                 RecalculateLayout();
                 return true;

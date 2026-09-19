@@ -20,6 +20,20 @@ public sealed partial class NativeJournalWindow
     private TextureButtonNode? locateButton;
     private TextureButtonNode? settingsButton;
 
+    // The map toggle and this locate button sit as a pair in the region column's
+    // bottom right corner. Their 28px sprites have about 5px of clear padding
+    // around a ~17px gold button, so the boxes overlap by 8px and the pair
+    // hangs 3px past the column's edge.
+    private const float CornerButtonSize = 28.0f;
+    private const float CornerButtonGap = -8.0f;
+    private const float CornerButtonRightOverhang = 3.0f;
+
+    private Vector2 MapButtonPosition()
+    {
+        float regionWidth = Math.Clamp(regionWidthSetting, 130.0f, 280.0f);
+        return new Vector2(contentOrigin.X + regionWidth + CornerButtonRightOverhang - CornerButtonSize, FooterPosition.Y);
+    }
+
     private const float SettingsButtonSize = 28.0f;
 
     // Title bar, laid out as in the game's own command panel (its diagnostics
@@ -31,6 +45,7 @@ public sealed partial class NativeJournalWindow
         if (settingsButton is null) return;
         settingsButton.Position = new Vector2(Size.X - 33.0f - 26.0f, 6.0f - 1.0f);
     }
+
     private JournalSpot? currentHole;
     private long nextLocateCheck;
 
