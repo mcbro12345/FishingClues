@@ -254,6 +254,8 @@ public sealed partial class NativeJournalWindow
             {
                 draggingDivider = false;
                 saveDivider();
+                // settle every panel on its exact final size
+                LayoutAttachedNodes();
             }
             else
             {
@@ -282,6 +284,7 @@ public sealed partial class NativeJournalWindow
                 // Have the game pick up the resized clipping/collision areas now
                 // rather than a frame later, so the panels don't trail the divider.
                 addon->UpdateCollisionNodeList(false);
+                if (dragKind == 0) RecordDragFrame(mouse.PositionY, addon->Scale);
             }
         }
         UpdateMapInteraction(addon, mouse, stage);
@@ -303,6 +306,37 @@ public sealed partial class NativeJournalWindow
             // out again by the very call meant to size things correctly.
             ReapplyDropdownLeftInset();
         }
+    }
+
+    // Diagnostics for the details-divider drag: the last frames of a drag, with what
+    // the plugin set (managed values) next to what the game holds (native height and
+    // on-screen Y), so any panel trailing the divider shows up as a mismatch.
+    private readonly System.Collections.Generic.Queue<string> dragFrames = new();
+    private int dragFrameNumber;
+    private float lastDragMouseY;
+
+    private unsafe void RecordDragFrame(float mouseY, float scale)
+    {
+        if (fishList is null || detailsList is null || detailsDivider is null || detailsBottomDivider is null) return;
+        string direction = mouseY < lastDragMouseY ? "UP" : mouseY > lastDragMouseY ? "down" : "still";
+        lastDragMouseY = mouseY;
+        AtkResNode* fishClip = fishList.ClippingContentNode;
+        AtkResNode* detailsClip = detailsList.ClippingContentNode;
+        AtkResNode* line = detailsDivider;
+        AtkResNode* bottom = detailsBottomDivider;
+        dragFrames.Enqueue(
+            $"#{dragFrameNumber++} {direction} mouseY={mouseY:0} ratio={configuration.DetailsHeightRatio:0.000} | "
+            + $"divider y={detailsDivider.Y:0.#} screenY={line->ScreenY:0.#} | "
+            + $"fishList y={fishList.Y:0.#} h={fishList.Height:0.#} clipH={fishList.ClippingContentNode.Height:0.#} nativeClipH={fishClip->Height:0.#} nativeClipScreenY={fishClip->ScreenY:0.#} | "
+            + $"detailsList y={detailsList.Y:0.#} h={detailsList.Height:0.#} clipH={detailsList.ClippingContentNode.Height:0.#} nativeClipH={detailsClip->Height:0.#} nativeClipScreenY={detailsClip->ScreenY:0.#} | "
+            + $"bottomDivider y={detailsBottomDivider.Y:0.#} screenY={bottom->ScreenY:0.#} scale={scale:0.##}");
+        while (dragFrames.Count > 40) dragFrames.Dequeue();
+    }
+
+    public string DescribeDragFrames()
+    {
+        if (dragFrames.Count == 0) return "Details divider drag: no drag recorded yet in this window.";
+        return "Details divider drag (last " + dragFrames.Count + " frames):\n  " + string.Join("\n  ", dragFrames);
     }
 
     protected override unsafe void OnFinalize(AtkUnitBase* addon)

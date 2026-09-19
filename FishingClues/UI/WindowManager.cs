@@ -80,6 +80,10 @@ public sealed class WindowManager
         ? nativeJournal.DescribeMapState()
         : "Area map: journal window is not currently open.";
 
+    public string DescribeDragFrames() => nativeJournal?.IsOpen == true
+        ? nativeJournal.DescribeDragFrames()
+        : "Details divider drag: journal window is not currently open.";
+
     public void OpenSettings() => dalamudSettings.IsOpen = true;
 
     public void SaveConfiguration()

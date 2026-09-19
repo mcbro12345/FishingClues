@@ -3,7 +3,7 @@
     "Author": "mcbro",
     "Name": "Fishing Clues",
     "InternalName": "FishingClues",
-    "AssemblyVersion": "1.6.2.0",
+    "AssemblyVersion": "1.6.3.0",
     "Description": "A better Fishing Log: spoiler-conscious, and packed with the info you actually need to find and catch fish.",
     "Punchline": "A Better Fishing Log",
     "ApplicableVersion": "any",
@@ -15,8 +15,8 @@
     "LoadPriority": 0,
     "IconUrl": "https://raw.githubusercontent.com/mcbro12345/FishingClues/main/images/icon.png",
     "RepoUrl": "https://github.com/mcbro12345/FishingClues",
-    "DownloadLinkInstall": "https://github.com/mcbro12345/FishingClues/releases/download/v1.6.2/FishingClues-1.6.2.zip",
-    "DownloadLinkUpdate": "https://github.com/mcbro12345/FishingClues/releases/download/v1.6.2/FishingClues-1.6.2.zip",
-    "DownloadLinkTesting": "https://github.com/mcbro12345/FishingClues/releases/download/v1.6.2/FishingClues-1.6.2.zip"
+    "DownloadLinkInstall": "https://github.com/mcbro12345/FishingClues/releases/download/v1.6.3/FishingClues-1.6.3.zip",
+    "DownloadLinkUpdate": "https://github.com/mcbro12345/FishingClues/releases/download/v1.6.3/FishingClues-1.6.3.zip",
+    "DownloadLinkTesting": "https://github.com/mcbro12345/FishingClues/releases/download/v1.6.3/FishingClues-1.6.3.zip"
   }
 ]

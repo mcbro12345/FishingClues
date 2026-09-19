@@ -25,7 +25,6 @@ public sealed class DiagnosticWindow(Action refresh) : Window("Fishing Clues Dia
 
     public override void Draw()
     {
-        ImGui.TextWrapped("Open the vanilla Fishing Log to the area that disagrees, then press Refresh. Copy the report and paste it into our conversation.");
         if (ImGui.Button("Refresh")) refresh();
         ImGui.SameLine();
         if (ImGui.Button("Copy report"))

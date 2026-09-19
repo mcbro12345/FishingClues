@@ -76,6 +76,7 @@ public sealed partial class NativeJournalWindow(
     private ScrollingNode<JournalListNode>? detailsList;
     private HorizontalLineNode? detailsDivider;
     private HorizontalLineNode? detailsBottomDivider;
+    private float previousFishHeight = float.NaN, previousDetailsHeight = float.NaN;
     private CollisionNode? dividerHandle;
     private CollisionNode? regionDividerHandle, areaDividerHandle;
     private int dragKind;
@@ -562,14 +563,27 @@ public sealed partial class NativeJournalWindow(
                 dividerHandle.Position = fishList.Position + new Vector2(0, fishHeight);
                 dividerHandle.Size = new Vector2(fishWidth, 12);
             }
-            fishList.Height = fishHeight;
+            // The game applies a node's new size at once but only redraws it at its new
+            // position a frame later (its diagnostics report showed the on-screen Y
+            // trailing the set Y by exactly one frame). While dragging the details
+            // divider the moving nodes' sizes therefore use last frame's values, so
+            // each list's edge stays put against its divider instead of running ahead.
+            float appliedFishHeight = fishHeight, appliedDetailsHeight = detailsHeight;
+            if (draggingDivider && dragKind == 0 && !float.IsNaN(previousFishHeight))
+            {
+                appliedFishHeight = previousFishHeight;
+                appliedDetailsHeight = previousDetailsHeight;
+            }
+            previousFishHeight = fishHeight;
+            previousDetailsHeight = detailsHeight;
+            fishList.Height = appliedFishHeight;
             detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight);
             detailsDivider.Width = fishWidth;
             // The list runs from just under the top divider to just above the bottom
             // one, so scrolled text is cut off flush at the divider lines.
             Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 2.0f);
             detailsList.Position = panelOrigin + new Vector2(8, 0);
-            detailsList.Size = new Vector2(fishWidth - 16, detailsHeight + 8.0f);
+            detailsList.Size = new Vector2(fishWidth - 16, appliedDetailsHeight + 8.0f);
             if (detailsBottomDivider is not null)
             {
                 detailsBottomDivider.IsVisible = true;

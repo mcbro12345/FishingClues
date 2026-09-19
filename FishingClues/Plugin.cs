@@ -389,6 +389,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         report.AppendLine($"Layout: regionWidth={configuration.NativeRegionWidth:0.#}; areaWidth={configuration.NativeAreaWidth:0.#}");
         report.AppendLine($"Replacement={configuration.ReplaceNormalFishingLog}; loggedIn={Services.ClientState.IsLoggedIn}; explicit={normalLog.AllowExplicitVanillaLog}; seenVisible={normalLog.WasNormalLogVisible}; closeQueued={normalLog.IsCloseQueued}; customOpen={windowManager.IsNativeJournalOpen}");
         report.AppendLine(windowManager.DescribeMapState().TrimEnd());
+        report.AppendLine(windowManager.DescribeDragFrames().TrimEnd());
         DescribeNativeMapTextures(report);
         DescribeWindowButtons(report);
         try
