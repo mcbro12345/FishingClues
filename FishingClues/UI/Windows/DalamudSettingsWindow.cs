@@ -81,6 +81,13 @@ public sealed class DalamudSettingsWindow(Configuration configuration, Action sa
             configuration.UncaughtFishFirst = uncaughtFirst;
             SaveLayout();
         }
+        bool sortBait = configuration.SortBaitByItemLevel;
+        if (ImGui.Checkbox("Sort bait by item level (highest first)", ref sortBait))
+        {
+            configuration.SortBaitByItemLevel = sortBait;
+            SaveLayout();
+        }
+        DrawWrappedHint("Orders the bait lists in a fish's details from the highest item level to the lowest. Applies the next time you open a fish's details.");
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.TextDisabled("DIVIDER LOCK");

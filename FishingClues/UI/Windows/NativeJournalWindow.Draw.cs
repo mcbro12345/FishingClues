@@ -74,7 +74,6 @@ public sealed partial class NativeJournalWindow
                 guideLocationPending = false;
                 guidePoles = selectedGuide.GetPoles(guideLocation);
                 guidePole = guidePoles.FirstOrDefault();
-                poleSelector?.SetOptions(guidePoles, guidePole);
             }
             RenderCatchBody();
         }
@@ -135,7 +134,14 @@ public sealed partial class NativeJournalWindow
                         partialHover = row;
                         addonEvents.SetCursor(AddonCursorType.Clickable);
                         ownsResizeCursor = true;
-                        if ((mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0) row.OnClick?.Invoke();
+                        if ((mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0)
+                        {
+                            // A normal row click plays its sound as part of the native button
+                            // reaction; invoking OnClick by hand skips that, so play it here
+                            // (as the area list's manual clicks do).
+                            UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
+                            row.OnClick?.Invoke();
+                        }
                         break;
                     }
                 }
@@ -299,7 +305,6 @@ public sealed partial class NativeJournalWindow
     protected override unsafe void OnFinalize(AtkUnitBase* addon)
     {
         catchBody = null;
-        poleSelector = null;
         ReleaseResizeCursor();
         SaveViewState();
         base.OnFinalize(addon);
@@ -308,6 +313,7 @@ public sealed partial class NativeJournalWindow
         fishList = null;
         detailsList = null;
         detailsDivider = null;
+        detailsBottomDivider = null;
         dividerHandle = null;
         regionDividerHandle = areaDividerHandle = null;
         draggingDivider = false;
@@ -325,6 +331,7 @@ public sealed partial class NativeJournalWindow
         areaHeader = null;
         fishHeader = null;
         locateButton = null;
+        settingsButton = null;
         currentHole = null;
         spotTitle = null;
         spotSummary = null;

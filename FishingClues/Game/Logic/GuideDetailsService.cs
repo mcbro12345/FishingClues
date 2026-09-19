@@ -146,17 +146,15 @@ public sealed class GuideDetailsService
             lines.Add("Bait: Not used.");
             return lines;
         }
-        if (pole is not null) lines.Add($"Pole Gathering: {pole.Gathering}");
-        else lines.Add("No eligible fishing pole at your Fisher level.");
         int minimum = MinimumGathering(fish, location.SpotId);
-        if (minimum > 0) lines.Add($"Total gathering required: {minimum} (all equipped gear).");
+        if (minimum > 0) lines.Add($"Total Item Level required: {minimum} (all equipped gear).");
         if (RequiredPole(fish) != 0) lines.Add($"Required pole: {formatter.ItemName(RequiredPole(fish))}");
         if (fishData.Data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(location.SpotId, out var entry))
         {
             bool IsFish(uint id) => fishData.Data.Info.ContainsKey(id) || fishData.Data.Fish.ContainsKey(id);
             var ids = entry.Recommended.Concat(entry.Observed).Distinct().ToArray();
-            var mooch = ids.Where(IsFish).ToArray();
-            var bait = ids.Where(id => !IsFish(id)).OrderBy(id => Services.DataManager.GetExcelSheet<Item>().TryGetRow(id, out var baitItem) ? baitItem.LevelEquip : uint.MaxValue).ThenBy(formatter.ItemName).Select(formatter.ItemName).ToArray();
+            var mooch = formatter.SortByItemLevel(ids.Where(IsFish)).ToArray();
+            var bait = formatter.OrderBait(ids.Where(id => !IsFish(id))).Select(formatter.ItemName).ToArray();
             lines.Add("Bait: " + (bait.Length > 0 ? string.Join(", ", bait) : mooch.Length > 0 ? "None (mooch only)." : "Unknown."));
             lines.Add("Mooch: " + (mooch.Length > 0 ? string.Join(", ", mooch.Select(formatter.ItemName)) : "None."));
         }

@@ -33,6 +33,11 @@ public sealed class FishEntryRowNode : ListButtonNode
         OnClick = () => { if (!favoriteHovered) onClick(); };
 
         LabelNode.TextFlags = TextFlags.None;
+        // The hover and selected highlights are soft at their top and bottom edges. Stretched
+        // over a tall (multi-line) row those soft bands grew with it and left the text in
+        // the faded part, so the bands are pinned at 6px and only the solid middle stretches.
+        HoverBackgroundNode.TopOffset = HoverBackgroundNode.BottomOffset = 6.0f;
+        SelectedBackgroundNode.TopOffset = SelectedBackgroundNode.BottomOffset = 6.0f;
         fishIcon = new IconImageNode
         {
             Size = new Vector2(IconSize, IconSize),
@@ -190,7 +195,8 @@ public sealed class FishEntryRowNode : ListButtonNode
         if (unknownIcon is not null) unknownIcon.Position = new Vector2(4.0f, iconY);
         LabelNode.Position = new Vector2(50.0f, nameY);
         LabelNode.Size = new Vector2(Math.Max(20.0f, Width - rightReserve), nameHeight);
-        if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(50, Width - 30), nameY);
+        // The star (28px tall) is centered on the fish icon's vertical middle.
+        if (favoriteButton is not null) favoriteButton.Position = new Vector2(Math.Max(50, Width - 30), iconY + (IconSize - favoriteButton.Height) / 2.0f);
         if (availabilityBadge is not null) availabilityBadge.Position = new Vector2(50.0f, nameY + nameHeight + lineGap);
 
         if (Math.Abs(Height - desiredHeight) > 0.5f) Height = desiredHeight;

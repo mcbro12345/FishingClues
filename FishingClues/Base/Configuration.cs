@@ -24,6 +24,7 @@ public sealed class Configuration : IPluginConfiguration
     public bool Use12HourTime { get; set; }
     public bool DebugRevealEverything { get; set; }
     public bool UncaughtFishFirst { get; set; } = true;
+    public bool SortBaitByItemLevel { get; set; }
     public bool LockJournalDividers { get; set; }
     public bool LockRegionDivider { get; set; } = true;
     public bool LockAreaDivider { get; set; } = true;

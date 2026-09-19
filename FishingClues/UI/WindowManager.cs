@@ -108,12 +108,14 @@ public sealed class WindowManager
         _ = OpenNativeJournalAsync();
     }
 
-    public void ToggleNativeJournal()
+    // silenceOpenSound: the game's own Fishing Log that this window is replacing has
+    // just played its open sound, so this one stays quiet rather than doubling it.
+    public void ToggleNativeJournal(bool silenceOpenSound = false)
     {
         if (nativeJournal?.IsOpen == true)
             nativeJournal.Close();
         else
-            _ = OpenNativeJournalAsync();
+            _ = OpenNativeJournalAsync(silenceOpenSound);
     }
 
     public void CloseNativeJournal()
@@ -151,10 +153,12 @@ public sealed class WindowManager
         nativeJournalWasOpen = journalOpenNow;
     }
 
-    public async Task OpenNativeJournalAsync()
+    public async Task OpenNativeJournalAsync(bool silenceOpenSound = false)
     {
         try
         {
+            // Start building the current zone's map now, alongside building the window.
+            NativeJournalWindow.PrewarmMapCache(Services.ClientState.TerritoryType);
             await nativeUiInitialization;
             IReadOnlyList<JournalRegion> regions = journal.GetJournal();
             await Services.Framework.Run(() =>
@@ -169,9 +173,10 @@ public sealed class WindowManager
                     ex => Services.Log.Error(ex, "Native journal button failed; using the text fallback."),
                     () => Services.PluginInterface.SavePluginConfig(configuration), Services.AddonEvents,
                     () => _ = OpenGuideAsync(), guideDetails: guideDetails.BuildGuideDetails, getAvailability: availability.GetAvailability,
-                    pendingDiscoveredSpotId: pendingDiscovery)
+                    pendingDiscoveredSpotId: pendingDiscovery, openSettings: OpenSettings)
                 {
                     InternalName = "FishingCluesJournalNative",
+                    OpenWindowSoundEffectId = silenceOpenSound ? 0 : 23,
                     Title = "Fishing Log",
                     Subtitle = "Fishing Clues",
                     Size = new Vector2(
@@ -258,6 +263,7 @@ public sealed class WindowManager
         {
             nativeJournal?.Dispose();
             nativeGuide?.Dispose();
+            NativeJournalWindow.ClearMapTextureCache();
             KamiToolKitLibrary.Dispose();
         }
     }

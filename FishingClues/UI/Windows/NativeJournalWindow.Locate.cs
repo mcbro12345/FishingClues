@@ -18,6 +18,19 @@ public sealed partial class NativeJournalWindow
     private const long LocateCheckIntervalMs = 400;
 
     private TextureButtonNode? locateButton;
+    private TextureButtonNode? settingsButton;
+
+    private const float SettingsButtonSize = 28.0f;
+
+    // Title bar, laid out as in the game's own command panel (its diagnostics
+    // report: close button 28x28 at x=258,y=10; round settings button 28x28 at
+    // x=232,y=6): the round button sits 26px left of the close button's left edge
+    // and 4px above its top. Our close button is at (Width - 33, 6).
+    private void PositionSettingsButton()
+    {
+        if (settingsButton is null) return;
+        settingsButton.Position = new Vector2(Size.X - 33.0f - 26.0f, 6.0f - 1.0f);
+    }
     private JournalSpot? currentHole;
     private long nextLocateCheck;
 
@@ -40,6 +53,7 @@ public sealed partial class NativeJournalWindow
 
     private void PositionLocateButton()
     {
+        PositionSettingsButton();
         if (locateButton is null) return;
         // Just left of the map button in the region column's bottom right
         // corner (see MapButtonPosition).

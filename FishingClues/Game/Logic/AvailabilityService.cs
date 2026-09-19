@@ -57,36 +57,12 @@ public sealed class AvailabilityService
         uint? prevWeather = prevWeatherGated ? GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(EorzeaWeather.WindowStart(now) - EorzeaWeather.SecondsPerWeatherWindow)) : null;
         bool prevOk = !prevWeatherGated || (prevWeather is uint pw && condition.PreviousWeather.Contains(pw));
 
-        string? WeatherClause()
-        {
-            if (!weatherGated && !prevWeatherGated) return null;
-            string current = weatherGated ? formatter.FormatWeather(condition.Weather, "any weather") : "any weather";
-            return prevWeatherGated ? $"{current} after {formatter.FormatWeather(condition.PreviousWeather, "any weather")}" : current;
-        }
-
-        // Every wording below is built from up to two noun phrases:
-        //   time    - "9:00pm-3:00am ET"
-        //   weather - "Rain / Showers", "Rain after Fog", "any weather after Fog"
-        // and the gates that exist give exactly these cases (both for "available"
-        // and "waiting"): time only, weather only, or weather with a time window.
-        //   Available during the 9:00pm-3:00am ET window.
-        //   Available with Rain / Showers.
-        //   Available with Rain after Fog during a 9:00pm-3:00am ET window.
-        //   Waiting for the 9:00pm-3:00am ET window.
-        //   Waiting for Rain / Showers.
-        //   Waiting for Rain after Fog during a 9:00pm-3:00am ET window.
-        string? timeText = timeGated ? formatter.FormatTime(condition.StartHour, condition.EndHour) : null;
-        string? weatherText = WeatherClause();
-
+        // The sentences themselves (see FishDetailsFormatter.AvailableSentence and
+        // WaitingSentence) are shared with the fish details, so the badges and the
+        // details always word the requirements identically.
         if (timeOk && weatherOk && prevOk)
         {
-            string availableTooltip = (timeText, weatherText) switch
-            {
-                (string t, string w) => $"Available with {w} during a {t} window.",
-                (string t, null) => $"Available during the {t} window.",
-                (null, string w) => $"Available with {w}.",
-                _ => "Available now.",
-            };
+            string availableTooltip = formatter.AvailableSentence(condition);
 
             if (configuration.DisableAvailabilityCountdown)
                 return new FishAvailabilityInfo(true, availableTooltip, availableTooltip);
@@ -98,13 +74,7 @@ public sealed class AvailabilityService
             return new FishAvailabilityInfo(true, $"{availableCountdown} | {availableTooltip}", availableTooltip);
         }
 
-        string tooltip = (timeText, weatherText) switch
-        {
-            (string t, string w) => $"Waiting for {w} during a {t} window.",
-            (string t, null) => $"Waiting for the {t} window.",
-            (null, string w) => $"Waiting for {w}.",
-            _ => "Waiting for conditions to line up.",
-        };
+        string tooltip = formatter.WaitingSentence(condition);
 
         if (configuration.DisableAvailabilityCountdown)
             return new FishAvailabilityInfo(false, tooltip, tooltip);

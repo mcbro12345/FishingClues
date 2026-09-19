@@ -47,12 +47,10 @@ public sealed class FishDetailsFormatter
         {
             lines.Add("Requirements unknown."); return lines;
         }
-        if (!condition.RequirementsKnown) lines.Add("Some requirements are unknown.");
-        if (condition.StartHour != 0 || condition.EndHour != 24)
-            lines.Add($"Time: {FormatTime(condition.StartHour, condition.EndHour)}");
-        if (condition.Weather.Count > 0)
-            lines.Add($"Weather: {FormatWeather(condition.Weather, "No special requirement")}");
-        if (condition.PreviousWeather.Count > 0) lines.Add($"Previous weather: {FormatWeather(condition.PreviousWeather, "None")}");
+        // The time, weather and previous-weather requirements in one line, worded
+        // exactly like the availability badges.
+        if (IsGated(condition))
+            lines.Add($"Availability: {AvailableSentence(condition)}");
         if (condition.RequirementsKnown && condition.StartHour == 0 && condition.EndHour == 24 &&
             condition.Weather.Count == 0 && condition.PreviousWeather.Count == 0 && condition.Predators.Count == 0 &&
             condition.Folklore is null && condition.Snagging != true && string.IsNullOrWhiteSpace(condition.Lure))
@@ -82,9 +80,9 @@ public sealed class FishDetailsFormatter
             return ["Baits for this fishing hole: unknown."];
         bool IsFish(uint id) => data.Info.ContainsKey(id) || data.Fish.ContainsKey(id);
         var direct = entry.Recommended.Concat(entry.Observed).Distinct().Where(id => !IsFish(id)).ToArray();
-        var mooch = entry.Recommended.Concat(entry.Observed).Distinct().Where(IsFish).ToArray();
-        var recommended = direct.Where(entry.Recommended.Contains).ToArray();
-        var reported = direct.Where(id => !entry.Recommended.Contains(id)).ToArray();
+        var mooch = SortByItemLevel(entry.Recommended.Concat(entry.Observed).Distinct().Where(IsFish)).ToArray();
+        var recommended = SortByItemLevel(direct.Where(entry.Recommended.Contains)).ToArray();
+        var reported = SortByItemLevel(direct.Where(id => !entry.Recommended.Contains(id))).ToArray();
         if (recommended.Length > 0) lines.Add($"Bait: {string.Join(" / ", recommended.Select(ItemName))}");
         if (reported.Length > 0) lines.Add($"Other reported baits: {string.Join(" / ", reported.Select(ItemName))}");
         if (mooch.Length > 0)
@@ -106,13 +104,70 @@ public sealed class FishDetailsFormatter
         {
             lines.Add($"To catch {ItemName(fish)} here: requirements unknown."); return;
         }
-        var baits = entry.Recommended.Concat(entry.Observed).Distinct().ToArray();
+        var baits = SortByItemLevel(entry.Recommended.Concat(entry.Observed).Distinct()).ToArray();
         lines.Add($"To catch {ItemName(fish)} here: {string.Join(" / ", baits.Select(ItemName))}");
         foreach (var bait in baits.Where(id => data.Info.ContainsKey(id) || data.Fish.ContainsKey(id)))
             AppendMooch(bait, spot, new HashSet<uint>(visited), depth + 1, lines);
     }
 
+    // Highest item level first (ties keep their original order) when the
+    // "Sort bait by item level" setting is on; otherwise the order as given.
+    public IEnumerable<uint> SortByItemLevel(IEnumerable<uint> ids)
+        => configuration.SortBaitByItemLevel ? ids.OrderByDescending(ItemLevel) : ids;
+
+    // The order for a fish's "Bait:" line in the details panel: highest item
+    // level first (then by name) when "Sort bait by item level" is on, and the
+    // long-standing lowest equip level first (then by name) when it is off.
+    public IEnumerable<uint> OrderBait(IEnumerable<uint> ids)
+    {
+        if (configuration.SortBaitByItemLevel)
+            return ids.OrderByDescending(ItemLevel).ThenBy(ItemName);
+        return ids.OrderBy(id => Services.DataManager.GetExcelSheet<ItemSheet>().TryGetRow(id, out var item) ? item.LevelEquip : uint.MaxValue).ThenBy(ItemName);
+    }
+
+    private static uint ItemLevel(uint id)
+        => Services.DataManager.GetExcelSheet<ItemSheet>().TryGetRow(id, out var item) ? item.LevelItem.RowId : 0;
+
     public string ItemName(uint id) => Services.DataManager.GetExcelSheet<ItemSheet>().TryGetRow(id, out var item) ? item.Name.ToString() : fishData.Data.Items.GetValueOrDefault(id, $"Item #{id}");
+
+    // Shared wording for a fish's time/weather/previous-weather requirements,
+    // used by the availability badges and the fish details alike. Built from up
+    // to two noun phrases - the time window ("9:00pm-3:00am ET") and the weather
+    // ("Rain / Showers", "Rain after Fog", "any weather after Fog"):
+    //   Available during the 9:00pm-3:00am ET window.
+    //   Available with Rain / Showers.
+    //   Available with Rain after Fog during a 9:00pm-3:00am ET window.
+    //   Waiting for the 9:00pm-3:00am ET window.
+    //   Waiting for Rain / Showers.
+    //   Waiting for Rain after Fog during a 9:00pm-3:00am ET window.
+    public static bool IsGated(FishCondition condition)
+        => condition.StartHour != 0 || condition.EndHour != 24 || condition.Weather.Count > 0 || condition.PreviousWeather.Count > 0;
+
+    public string? TimeClause(FishCondition condition)
+        => condition.StartHour != 0 || condition.EndHour != 24 ? FormatTime(condition.StartHour, condition.EndHour) : null;
+
+    public string? WeatherClause(FishCondition condition)
+    {
+        if (condition.Weather.Count == 0 && condition.PreviousWeather.Count == 0) return null;
+        string current = condition.Weather.Count > 0 ? FormatWeather(condition.Weather, "any weather") : "any weather";
+        return condition.PreviousWeather.Count > 0 ? $"{current} after {FormatWeather(condition.PreviousWeather, "any weather")}" : current;
+    }
+
+    public string AvailableSentence(FishCondition condition) => (TimeClause(condition), WeatherClause(condition)) switch
+    {
+        (string t, string w) => $"Available with {w} during a {t} window.",
+        (string t, null) => $"Available during the {t} window.",
+        (null, string w) => $"Available with {w}.",
+        _ => "Available now.",
+    };
+
+    public string WaitingSentence(FishCondition condition) => (TimeClause(condition), WeatherClause(condition)) switch
+    {
+        (string t, string w) => $"Waiting for {w} during a {t} window.",
+        (string t, null) => $"Waiting for the {t} window.",
+        (null, string w) => $"Waiting for {w}.",
+        _ => "Waiting for conditions to line up.",
+    };
 
     public string FormatWeather(List<uint> ids, string fallback) => ids.Count == 0 ? fallback : string.Join(" / ", ids.Select(id => fishData.Data.Weather.GetValueOrDefault(id, $"Weather #{id}")));
 

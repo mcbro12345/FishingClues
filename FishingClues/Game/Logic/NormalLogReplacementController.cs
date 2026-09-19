@@ -189,7 +189,7 @@ public sealed class NormalLogReplacementController
                 if (addon != null && addon->IsReady)
                     addon->Close(true);
             }
-            windowManager.ToggleNativeJournal();
+            windowManager.ToggleNativeJournal(silenceOpenSound: true);
             return;
         }
         if (!configuration.ReplaceNormalFishingLog || now - lastReplacement < 1000)
@@ -205,7 +205,7 @@ public sealed class NormalLogReplacementController
             if (addon != null && addon->IsReady)
                 addon->Close(true);
         }
-        windowManager.ToggleNativeJournal();
+        windowManager.ToggleNativeJournal(silenceOpenSound: true);
     }
 
     private void OnFishingNoteIntercept(AddonEvent eventType, AddonArgs args)

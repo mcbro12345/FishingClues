@@ -9,14 +9,42 @@ using FishingClues.Game.Logic;
 
 namespace FishingClues.UI.Components;
 
+// One line of a fish's details. A "Label: contents" line is laid out like the
+// game's own settings pages: the label as a larger, lighter title on its own
+// row, with the contents (item links and all) indented underneath it and
+// wrapping at that indent. A line with no label is just its contents.
 public sealed class ItemDetailRow : ResNode
 {
+    private const float LineHeight = 18.0f;
+    private const float TitleHeight = 18.0f;
+    // Empty space above each title, separating one section from the last.
+    private const float SectionGap = 5.0f;
+    private const float ContentIndent = 16.0f;
+    // Same size as the contents; the title is set apart by its lighter color.
+    private const uint TitleFontSize = 14;
+
+    private static readonly Vector4 TitleColor = new(0.93f, 0.93f, 0.93f, 1.0f);
+
     private readonly List<LabelTextNode> segments = new();
+    private readonly LabelTextNode? title;
     private bool layingOut;
-    public ItemDetailRow(string text, IReadOnlyDictionary<string, uint> links)
+
+    // Height of one line of contents; grows with a larger font (see the fontSize argument).
+    private readonly float lineHeight = LineHeight;
+
+    public ItemDetailRow(string text, IReadOnlyDictionary<string, uint> links, uint fontSize = 14, FontType? fontType = null)
     {
-        int prefixLength = text.IndexOf(':') + 1;
-        bool first = true;
+        lineHeight = LineHeight + (fontSize - 14) * 1.5f;
+        int colon = text.IndexOf(':');
+        if (colon > 0)
+        {
+            title = new LabelTextNode { String = text[..colon], FontSize = TitleFontSize, Height = TitleHeight, Width = 1000 };
+            title.TextColor = TitleColor;
+            title.Width = Math.Max(1, title.GetTextDrawSize(false).X + 2);
+            title.AttachNode(this);
+            text = text[(colon + 1)..].TrimStart();
+        }
+
         while (text.Length > 0) {
             var match = links.Where(p => text.StartsWith(p.Key, StringComparison.Ordinal))
                 .OrderByDescending(p => p.Key.Length).FirstOrDefault();
@@ -27,13 +55,13 @@ public sealed class ItemDetailRow : ResNode
                 if (length < text.Length && text[length] == ' ') length++;
             }
             if (match.Key is null) {
-                if (first && prefixLength > 0) length = prefixLength;
-                else while (length < text.Length && !char.IsWhiteSpace(text[length - 1]) && !links.Keys.Any(k => text.AsSpan(length).StartsWith(k, StringComparison.Ordinal))) length++;
+                while (length < text.Length && !char.IsWhiteSpace(text[length - 1]) && !links.Keys.Any(k => text.AsSpan(length).StartsWith(k, StringComparison.Ordinal))) length++;
             }
-            var node = new LabelTextNode { String = text[..length], FontSize = 14, Height = 24, Width = 1000 };
-            if (first && prefixLength > 0) node.TextFlags |= TextFlags.Bold;
-            first = false;
-            node.Width = Math.Max(1, node.GetTextDrawSize(false).X + 2);
+            var node = new LabelTextNode { String = text[..length], FontSize = fontSize, Height = lineHeight, Width = 1000 };
+            if (fontType is FontType font) node.FontType = font;
+            // Words are placed one after another, each measured with its trailing space,
+            // so no extra padding is added (it made the gaps between words too wide).
+            node.Width = Math.Max(1, node.GetTextDrawSize(false).X - 1);
             if (match.Key is not null) {
                 node.ItemTooltip = match.Value;
                 var normal = new Vector4(0.55f, 0.82f, 1, 1);
@@ -58,13 +86,22 @@ public sealed class ItemDetailRow : ResNode
     {
         if (segments is null || layingOut) return;
         layingOut = true;
-        float x = 0, y = 0;
+        float y = 0;
+        float left = 0;
+        if (title is not null) {
+            y = SectionGap;
+            title.Position = new Vector2(0, y);
+            y += TitleHeight;
+            left = ContentIndent;
+        }
+        float x = left;
         foreach (var node in segments) {
-            if (x > 0 && x + node.Width > Width) { x = 0; y += 24; }
+            if (x > left && x + node.Width > Width) { x = left; y += lineHeight; }
             node.Position = new Vector2(x, y);
             x += node.Width;
         }
-        Height = y + 24;
+        // a title with nothing under it has no content row to add
+        Height = segments.Count == 0 ? y : y + lineHeight;
         layingOut = false;
     }
 }

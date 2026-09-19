@@ -61,10 +61,12 @@ public sealed partial class NativeJournalWindow(
     // window straight to it on open, ahead of both the persisted view and
     // the first-open-of-session location auto-navigate. Only ever set for
     // the real journal window, never the fish guide.
-    uint? pendingDiscoveredSpotId = null) : NativeAddon
+    uint? pendingDiscoveredSpotId = null,
+    // Opens the plugin's settings window (the gear button in the title bar).
+    Action? openSettings = null) : NativeAddon
 {
     private const float HeaderHeight = 28.0f;
-    private const float FishSummaryHeight = 61.0f;
+    private const float FishSummaryHeight = 54.0f;
     private const float ColumnGap = 10.0f;
     // The warm gold requested for the region list's text.
     private static readonly Vector4 RegionListTextColor = new(0.80f, 0.66f, 0.40f, 1.0f);
@@ -73,6 +75,7 @@ public sealed partial class NativeJournalWindow(
     private ScrollingNode<JournalListNode>? fishList;
     private ScrollingNode<JournalListNode>? detailsList;
     private HorizontalLineNode? detailsDivider;
+    private HorizontalLineNode? detailsBottomDivider;
     private CollisionNode? dividerHandle;
     private CollisionNode? regionDividerHandle, areaDividerHandle;
     private int dragKind;
@@ -127,6 +130,25 @@ public sealed partial class NativeJournalWindow(
 
     protected override unsafe void OnSetup(AtkUnitBase* addon, Span<AtkValue> values)
     {
+        // A gear button in the title bar, left of the close button, that opens
+        // the plugin's settings (the game's own title-bar cog graphic).
+        if (openSettings is not null)
+        {
+            settingsButton = new TextureButtonNode
+            {
+                // The command panel's own round settings button (its diagnostics report:
+                // a CircleButtons.tex sprite, 28x28 at (0,0), plate and cog in one).
+                Size = new Vector2(SettingsButtonSize, SettingsButtonSize),
+                TexturePath = "ui/uld/CircleButtons.tex",
+                TextureCoordinates = new Vector2(0.0f, 0.0f),
+                TextureSize = new Vector2(28.0f, 28.0f),
+                TextTooltip = "Open the Fishing Clues settings",
+                OnClick = openSettings,
+            };
+            settingsButton.AttachNode(this);
+            PositionSettingsButton();
+        }
+
         float regionWidth = Math.Clamp(regionWidthSetting, 130.0f, 280.0f);
         float maximumAreaWidth = Math.Max(240.0f, ContentSize.X - regionWidth - 380.0f);
         float areaWidth = Math.Clamp(areaWidthSetting, 240.0f, Math.Min(500.0f, maximumAreaWidth));
@@ -154,9 +176,14 @@ public sealed partial class NativeJournalWindow(
         areaList.ContentNode.FitWidth = false;
         fishList = CreateList(contentOrigin + new Vector2(fishX, HeaderHeight), new Vector2(ContentSize.X - fishX, ContentSize.Y - HeaderHeight));
         detailsList = CreateList(contentOrigin, new Vector2(200, 150));
+        detailsList.ContentNode.ItemSpacing = 0.0f;
+        // headroom so the fish name's tall glyphs aren't clipped at the list's top edge
+        detailsList.ContentNode.FirstItemSpacing = 8.0f;
         detailsDivider = new HorizontalLineNode { Height = 2.0f };
         detailsList.AttachNode(this);
         detailsDivider.AttachNode(this);
+        detailsBottomDivider = new HorizontalLineNode { Height = 2.0f };
+        detailsBottomDivider.AttachNode(this);
         dividerHandle = new CollisionNode { ShowClickableCursor = false };
         dividerHandle.AddEvent(AtkEventType.MouseDown, () =>
         {
@@ -515,7 +542,7 @@ public sealed partial class NativeJournalWindow(
         if (searchInput is not null) {
             searchInput.Position = contentOrigin;
             searchInput.Width = Math.Max(100, fishWidth - 90);
-            if (searchButton is not null) searchButton.Position = contentOrigin + new Vector2(fishWidth - 80, 1.5f);
+            if (searchButton is not null) searchButton.Position = contentOrigin + new Vector2(fishWidth - 80, 3.5f);
         }
         float fishBodyHeight = listHeight - (GuideMode ? 8 : FishSummaryHeight);
         fishList.Position = contentOrigin + new Vector2(fishX, HeaderHeight + (GuideMode ? 8 : FishSummaryHeight));
@@ -538,9 +565,17 @@ public sealed partial class NativeJournalWindow(
             fishList.Height = fishHeight;
             detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight);
             detailsDivider.Width = fishWidth;
-            Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 12.0f);
+            // The list runs from just under the top divider to just above the bottom
+            // one, so scrolled text is cut off flush at the divider lines.
+            Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 2.0f);
             detailsList.Position = panelOrigin + new Vector2(8, 0);
-            detailsList.Size = new Vector2(fishWidth - 16, detailsHeight - 8);
+            detailsList.Size = new Vector2(fishWidth - 16, detailsHeight + 8.0f);
+            if (detailsBottomDivider is not null)
+            {
+                detailsBottomDivider.IsVisible = true;
+                detailsBottomDivider.Position = fishList.Position + new Vector2(0, fishHeight + detailsHeight + 10.0f);
+                detailsBottomDivider.Width = fishWidth;
+            }
             ReflowDetails();
         }
 

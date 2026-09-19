@@ -274,13 +274,15 @@ public sealed partial class NativeJournalWindow
         // Fills whatever part of the view the map art doesn't cover (panned
         // past the map's edge) with transparent black. Attached before the
         // map content so it sits behind it.
-        mapBackdrop = new ImGuiImageNode { FitTexture = true };
+        mapBackdrop = new ImGuiImageNode { FitTexture = true, Alpha = 0.0f };
         mapBackdrop.LoadTexture(CreateBackdropTexture());
         mapBackdrop.TextureSize = new Vector2(MapBorderTextureSize, MapBorderTextureSize);
         mapBackdrop.AttachNode(mapClip);
         mapContent = new ResNode();
         mapContent.AttachNode(mapClip);
-        mapImage = new ImGuiImageNode { Size = new Vector2(2048.0f, 2048.0f) };
+        // Transparent until the map texture arrives (LoadMapTextureAsync sets it to 1) -
+        // an image node with no texture draws as a black square.
+        mapImage = new ImGuiImageNode { Size = new Vector2(2048.0f, 2048.0f), Alpha = 0.0f };
         mapImage.AttachNode(mapContent);
 
         // Each side gets its own texture instance - ImGuiImageNode takes
@@ -666,13 +668,79 @@ public sealed partial class NativeJournalWindow
         return await Services.TextureProvider.CreateFromRawAsync(RawImageSpecification.Rgba32(w, h), data, "FishingCluesMapComposite");
     }
 
+    // Built map textures (the parchment/terrain composite is slow to make), kept
+    // across window openings so the map appears at once when the journal reopens.
+    // Each window gets its own wrap sharing the cached one's GPU resource, since a
+    // node disposes the wrap it is given. At most MapTextureCacheSize maps are kept.
+    private const int MapTextureCacheSize = 4;
+    private static readonly Dictionary<string, System.Threading.Tasks.Task<IDalamudTextureWrap?>> MapTextureCache = new();
+    private static readonly List<string> MapTextureCacheOrder = new();
+
+    private static System.Threading.Tasks.Task<IDalamudTextureWrap?> GetCachedMapTextureAsync(string path)
+    {
+        lock (MapTextureCache)
+        {
+            if (MapTextureCache.TryGetValue(path, out var existing)) return existing;
+            var task = BuildMapTextureAsync(path);
+            MapTextureCache[path] = task;
+            MapTextureCacheOrder.Add(path);
+            while (MapTextureCacheOrder.Count > MapTextureCacheSize)
+            {
+                string oldest = MapTextureCacheOrder[0];
+                MapTextureCacheOrder.RemoveAt(0);
+                if (MapTextureCache.Remove(oldest, out var evicted))
+                    _ = evicted.ContinueWith(t => { if (t.IsCompletedSuccessfully) t.Result?.Dispose(); });
+            }
+            return task;
+        }
+    }
+
+    private static async System.Threading.Tasks.Task<IDalamudTextureWrap?> BuildMapTextureAsync(string path)
+    {
+        try
+        {
+            return await CreateMapCompositeAsync(path) ?? await Services.TextureProvider.GetFromGame(path).RentAsync();
+        }
+        catch (Exception ex)
+        {
+            Services.Log.Warning(ex, $"[FishingClues] Area map: failed to load '{path}'");
+            lock (MapTextureCache) { MapTextureCache.Remove(path); MapTextureCacheOrder.Remove(path); }
+            return null;
+        }
+    }
+
+    // Starts building the map for a territory in the background (a no-op if it's
+    // already built or building), so the journal's map is ready when it opens.
+    public static void PrewarmMapCache(uint territoryId)
+    {
+        if (territoryId == 0) return;
+        if (!Services.DataManager.GetExcelSheet<Lumina.Excel.Sheets.TerritoryType>().TryGetRow(territoryId, out var territory)
+            || territory.Map.ValueNullable is not { } map || map.RowId == 0) return;
+        string id = map.Id.ToString();
+        int slash = id.IndexOf('/');
+        if (slash <= 0 || slash >= id.Length - 1) return;
+        _ = GetCachedMapTextureAsync($"ui/map/{id[..slash]}/{id[(slash + 1)..]}/{id[..slash]}{id[(slash + 1)..]}_m.tex");
+    }
+
+    public static void ClearMapTextureCache()
+    {
+        lock (MapTextureCache)
+        {
+            foreach (var task in MapTextureCache.Values)
+                _ = task.ContinueWith(t => { if (t.IsCompletedSuccessfully) t.Result?.Dispose(); });
+            MapTextureCache.Clear();
+            MapTextureCacheOrder.Clear();
+        }
+    }
+
     private async System.Threading.Tasks.Task LoadMapTextureAsync(string texturePath)
     {
         IDalamudTextureWrap texture;
         try
         {
-            texture = await CreateMapCompositeAsync(texturePath)
-                ?? await Services.TextureProvider.GetFromGame(texturePath).RentAsync();
+            var cached = await GetCachedMapTextureAsync(texturePath);
+            if (cached is null) return;
+            texture = cached.CreateWrapSharingLowLevelResource();
         }
         catch (Exception ex)
         {
@@ -694,6 +762,9 @@ public sealed partial class NativeJournalWindow
             mapImage.LoadTexture(texture);
             mapImage.TextureSize = new Vector2(2048.0f, 2048.0f);
             mapImage.Alpha = 1.0f;
+            // The dark backdrop only appears together with the map, so opening the
+            // journal never shows the translucent black on its own while it loads.
+            if (mapBackdrop is not null) mapBackdrop.Alpha = 1.0f;
         });
     }
 

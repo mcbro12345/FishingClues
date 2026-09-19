@@ -19,7 +19,8 @@ namespace FishingClues.UI.Windows;
 public sealed partial class NativeJournalWindow
 {
     private JournalListNode? catchBody;
-    private DetailSelectorRow<FishingPole>? poleSelector;
+    // Minimum height of a plain (unlabelled) line of details text.
+    private const float TightLineHeight = 18.0f;
     private bool writingCatchBody;
 
     private void ClearDetails()
@@ -27,7 +28,6 @@ public sealed partial class NativeJournalWindow
         if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HideTooltip();
         partialHover = null;
         catchBody = null;
-        poleSelector = null;
         writingCatchBody = false;
         selectedDetails = null;
         selectedGuide = null;
@@ -44,7 +44,6 @@ public sealed partial class NativeJournalWindow
     {
         if (detailsList is null) return;
         catchBody = null;
-        poleSelector = null;
         detailsList.ContentNode.Clear();
         if (selectedGuide is not null) {
             RenderGuideDetails();
@@ -61,15 +60,11 @@ public sealed partial class NativeJournalWindow
     private void RenderGuideDetails()
     {
         if (detailsList is null || selectedGuide is null) return;
-        AddDetailLine(selectedGuide.Name);
+        // the fish's name, in the same font and size as the Region / Area / Fish headings
+        AddDetailLine(selectedGuide.Name, 16, FontType.Jupiter);
         if (GuideMode) detailsList.ContentNode.AddNode(new DetailSelectorRow<GuideLocation>(
             "Locations:", selectedGuide.Locations, guideLocation, l => l.Label,
             l => { guideLocation = l; guideLocationPending = guideDetailsPending = true; }, "Unknown") { Width = Math.Max(80, detailsList.Width - 24) });
-        poleSelector = new DetailSelectorRow<FishingPole>(
-            "Fishing Pole:", guidePoles, guidePole, p => p.Label,
-            p => { guidePole = p; guideDetailsPending = true; },
-            guideLocation?.Spearfishing == true ? "Not used (spearfishing)" : "No eligible poles") { Width = Math.Max(80, detailsList.Width - 24) };
-        detailsList.ContentNode.AddNode(poleSelector);
         catchBody = new JournalListNode { Width = Math.Max(80, detailsList.Width - 24), FitContents = true };
         detailsList.ContentNode.AddNode(catchBody);
         RenderCatchBody();
@@ -84,7 +79,7 @@ public sealed partial class NativeJournalWindow
             foreach (string line in selectedGuide.GetDetails(guideLocation, guidePole)) AddDetailLine(line);
         else AddDetailLine("Location requirements unknown.");
         if (selectedGuide.Info.Count > 0) {
-            AddDetailLine("");
+            // (no blank line first: a section title already has space above it)
             AddDetailLine("Description:");
             foreach (string line in selectedGuide.Info) AddDetailLine(line);
         }
@@ -101,16 +96,15 @@ public sealed partial class NativeJournalWindow
         {
             if (Math.Abs(label.Width - width) < 1) continue;
             label.Width = width;
-            label.Height = Math.Max(24.0f, label.GetTextDrawSize(false).Y + 6.0f);
+            label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2.0f) + (label.FontSize > 14 ? 8.0f : 0.0f);
         }
         foreach (var row in detailsList.ContentNode.GetNodes<ItemDetailRow>()) row.Width = width;
         foreach (var row in detailsList.ContentNode.GetNodes<DetailSelectorRow<GuideLocation>>()) row.Width = width;
-        foreach (var row in detailsList.ContentNode.GetNodes<DetailSelectorRow<FishingPole>>()) row.Width = width;
         if (catchBody is not null && Math.Abs(catchBody.Width - width) >= 1) {
             catchBody.Width = width;
             foreach (var label in catchBody.GetNodes<LabelTextNode>()) {
                 label.Width = width;
-                label.Height = Math.Max(24, label.GetTextDrawSize(false).Y + 6);
+                label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2);
             }
             foreach (var row in catchBody.GetNodes<ItemDetailRow>()) row.Width = width;
             catchBody.RecalculateLayout();
@@ -127,21 +121,31 @@ public sealed partial class NativeJournalWindow
         detailsHint.IsVisible = selectedDetails is null;
     }
 
-    private void AddDetailLine(string text)
+    private void AddDetailLine(string text, uint fontSize = 14, FontType? fontType = null)
     {
         if (detailsList is null) return;
         if (selectedGuide is not null && (text.Contains(":") && !selectedGuide.Info.Contains(text) || selectedGuide.ItemLinks.ContainsKey(text))) {
-            (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(new ItemDetailRow(text, selectedGuide.ItemLinks) { Width = Math.Max(80, detailsList.Width - 24) });
+            (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(new ItemDetailRow(text, selectedGuide.ItemLinks, fontSize, fontType) { Width = Math.Max(80, detailsList.Width - 24) });
             return;
         }
         var label = new LabelTextNode
         {
             Width = Math.Max(80.0f, detailsList.Width - 24.0f),
-            FontSize = 14,
+            FontSize = fontSize,
+            // wrapped lines sit 18px apart (the labels' default of 24 is airier than we want)
+            LineSpacing = 18 + (fontSize - 14) * 3 / 2,
             TextFlags = TextFlags.WordWrap | TextFlags.MultiLine,
             String = text,
         };
-        label.Height = Math.Max(24.0f, label.GetTextDrawSize(false).Y + 6.0f);
+        if (fontType is FontType font) label.FontType = font;
+        label.Height = Math.Max(TightLineHeight, label.GetTextDrawSize(false).Y + 2.0f);
+        if (fontSize > 14)
+        {
+            // the big heading's glyphs rise above a snug box and get clipped at the
+            // list's top edge: give it headroom and sit the text at the bottom of it
+            label.Height += 8.0f;
+            label.AlignmentType = AlignmentType.BottomLeft;
+        }
         (writingCatchBody ? catchBody! : detailsList.ContentNode).AddNode(label);
     }
 }
