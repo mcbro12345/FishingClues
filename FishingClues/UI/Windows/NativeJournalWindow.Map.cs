@@ -126,6 +126,7 @@ public sealed partial class NativeJournalWindow
             OnClick = ToggleMapVisibility,
         };
         mapToggleButton.AttachNode(this);
+        CreateGameMapButton();
     }
 
     private ImGuiImageNode CreateBorderNode(bool vertical, bool outerFirst)
@@ -312,6 +313,8 @@ public sealed partial class NativeJournalWindow
         mapAreaName = null;
         mapDiscoveredLabel = null;
         mapToggleButton = null;
+        gameMapButton = null;
+        gameMapButtonIcon = null;
         mapBorderTop = null;
         mapBorderBottom = null;
         mapBorderLeft = null;

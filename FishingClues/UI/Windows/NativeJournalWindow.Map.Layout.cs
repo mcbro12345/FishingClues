@@ -60,6 +60,7 @@ public sealed partial class NativeJournalWindow
             mapDiscoveredLabel.Position = contentOrigin + new Vector2(areaX, captionTop + 18.0f) + titleOffset;
             mapDiscoveredLabel.Width = areaWidth;
         }
+        PositionGameMapButton(areaX + areaWidth, captionTop);
         if (!mapOn) return;
 
         Vector2 clipPosition = contentOrigin + new Vector2(areaX, captionTop + MapCaptionHeight - MapPanelSpacing);

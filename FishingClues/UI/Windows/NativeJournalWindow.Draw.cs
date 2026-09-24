@@ -28,6 +28,7 @@ public sealed partial class NativeJournalWindow
     {
         ClearManualHighlights();
         UpdateLocateButton();
+        UpdateGameMapButton();
         ApplyPendingWork();
         RefreshAvailability();
 
