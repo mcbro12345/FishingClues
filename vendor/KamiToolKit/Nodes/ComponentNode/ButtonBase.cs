@@ -63,17 +63,21 @@ public abstract unsafe class ButtonBase : ComponentNode<AtkComponentButton, AtkU
             .EndFrameSet()
             .Build());
 
+        // Hover brighten amount: was 16, which read visibly dimmer on hover than a real
+        // game window's own close/cog buttons (compared side by side against the vanilla
+        // titlebar) - raised to 40 to match. Applies to every TextureButtonNode and
+        // CircleButtonNode, including the journal's own close and settings buttons.
         foreground.AddTimeline(new TimelineBuilder()
             .AddFrameSetWithFrame(1, 9, 1, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f))
             .BeginFrameSet(10, 19)
             .AddFrame(10, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f))
-            .AddFrame(12, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(16.0f))
+            .AddFrame(12, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(40.0f))
             .EndFrameSet()
-            .AddFrameSetWithFrame(20, 29, 20, new Vector2(0.0f, 1.0f), 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(16.0f))
+            .AddFrameSetWithFrame(20, 29, 20, new Vector2(0.0f, 1.0f), 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(40.0f))
             .AddFrameSetWithFrame(30, 39, 30, Vector2.Zero, 178, multiplyColor: new Vector3(50.0f))
-            .AddFrameSetWithFrame(40, 49, 40, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(16.0f))
+            .AddFrameSetWithFrame(40, 49, 40, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(40.0f))
             .BeginFrameSet(50, 59)
-            .AddFrame(50, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(16.0f))
+            .AddFrame(50, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f), addColor: new Vector3(40.0f))
             .AddFrame(52, Vector2.Zero, 255, multiplyColor: new Vector3(100.0f))
             .EndFrameSet()
             .AddFrameSetWithFrame(130, 139, 130, Vector2.Zero, 255, new Vector3(16.0f), new Vector3(100.0f))

@@ -14,11 +14,13 @@ namespace FishingClues.Game.Logic;
 public sealed class FishDetailsFormatter
 {
     private readonly FishDataService fishData;
+    private readonly JournalBuilder journal;
     private readonly Configuration configuration;
 
-    public FishDetailsFormatter(FishDataService fishData, Configuration configuration)
+    public FishDetailsFormatter(FishDataService fishData, JournalBuilder journal, Configuration configuration)
     {
         this.fishData = fishData;
+        this.journal = journal;
         this.configuration = configuration;
     }
 
@@ -37,7 +39,7 @@ public sealed class FishDetailsFormatter
         return new FishClueSection(heading, lines);
     }
 
-    public IReadOnlyList<string> BuildRequirementLines(uint itemId, uint spotId = 0)
+    public IReadOnlyList<string> BuildRequirementLines(uint itemId, uint spotId = 0, uint nameSpotId = 0)
     {
         FishDataFile data = fishData.Data;
         var lines = new List<string>();
@@ -54,9 +56,8 @@ public sealed class FishDetailsFormatter
             condition.Weather.Count == 0 && condition.PreviousWeather.Count == 0 && condition.Predators.Count == 0 &&
             condition.Folklore is null && condition.Snagging != true && string.IsNullOrWhiteSpace(condition.Lure))
             lines.Add("No special requirements.");
-        foreach (List<uint> predator in condition.Predators)
-            if (predator.Count >= 2) lines.Add($"Intuition: catch {predator[1]} x {ItemName(predator[0])}");
-        if (condition.IntuitionSeconds is int seconds && seconds > 0) lines.Add($"Intuition window: {seconds / 60}:{seconds % 60:00}");
+        if (condition.Predators.Any(p => p.Count >= 2) || (condition.IntuitionSeconds is int intuitionSeconds && intuitionSeconds > 0))
+            lines.Add($"Intuition: {IntuitionSentence(condition, spotId != 0 ? spotId : nameSpotId)}");
         if (condition.Folklore is uint folklore) lines.Add($"Folklore: {data.Folklore.GetValueOrDefault(folklore, $"Book #{folklore}")}");
         if (condition.FishEyes == true) lines.Add("Fish Eyes: supported");
         if (condition.Snagging == true) lines.Add("Snagging: required");
@@ -169,6 +170,51 @@ public sealed class FishDetailsFormatter
     };
 
     public string FormatWeather(List<uint> ids, string fallback) => ids.Count == 0 ? fallback : string.Join(" / ", ids.Select(id => fishData.Data.Weather.GetValueOrDefault(id, $"Weather #{id}")));
+
+    // What to catch to open this fish's Intuition window, and how long it lasts - shared,
+    // word for word, by the availability badge (before the window is open) and the fish
+    // details panel (which always shows this, whether or not the window is open right now):
+    //   Catch 6x Wahoo to gain a 2m catch window.
+    //   Catch 6x Wahoo or 5x Marlin to gain a 1m 30s catch window.
+    // No "2:00" here - in the guide, every detail line is split into a heading and a value
+    // at its first colon (that's how "Bait: ..." renders), and a raw clock time would get
+    // split apart there too, so the duration uses the same "Xm Ys" style as everywhere else
+    // durations are shown (e.g. "Ends in 1h 53m 12s") instead.
+    public string IntuitionSentence(FishCondition condition, uint spotId = 0)
+    {
+        string[] chains = condition.Predators.Where(p => p.Count >= 2)
+            .Select(p => $"{p[1]}x {SpoilerSafeName(p[0], spotId)}").ToArray();
+        string what = chains.Length switch
+        {
+            0 => "the right fish",
+            1 => chains[0],
+            _ => string.Join(" or ", chains),
+        };
+        string window = condition.IntuitionSeconds is int seconds && seconds > 0
+            ? $" to gain a {FormatWindowDuration(seconds)} catch window" : " to gain a catch window";
+        return $"Catch {what}{window}.";
+    }
+
+    // A predator that is itself an undiscovered fish at this hole is named the way the list
+    // names it ("Unknown Fish #4", its place among the not-caught fish) so this can't spoil it.
+    public string SpoilerSafeName(uint itemId, uint spotId)
+    {
+        if (spotId != 0)
+        {
+            var missing = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots)
+                .FirstOrDefault(s => s.Id == spotId)?.Fish.Where(f => !f.IsCaught).ToList();
+            int index = missing?.FindIndex(f => f.ItemId == itemId) ?? -1;
+            if (index >= 0 && !missing![index].IdentityVisible) return $"Unknown Fish #{index + 1}";
+        }
+        return ItemName(itemId);
+    }
+
+    private static string FormatWindowDuration(int totalSeconds)
+    {
+        int minutes = totalSeconds / 60, seconds = totalSeconds % 60;
+        if (minutes > 0) return seconds > 0 ? $"{minutes}m {seconds:00}s" : $"{minutes}m";
+        return $"{seconds}s";
+    }
 
     public string FormatTime(double start, double end)
     {

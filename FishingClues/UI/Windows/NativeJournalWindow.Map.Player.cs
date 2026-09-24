@@ -185,12 +185,4 @@ public sealed partial class NativeJournalWindow
         }
         return playerMapInfo;
     }
-
-    private void DisposePlayerMarker()
-    {
-        playerCone?.Dispose();
-        playerMarker?.Dispose();
-        playerCone = null;
-        playerMarker = null;
-    }
 }

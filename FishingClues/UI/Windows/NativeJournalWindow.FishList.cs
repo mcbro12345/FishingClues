@@ -42,7 +42,7 @@ public sealed partial class NativeJournalWindow
         FillFishList(() =>
         {
             if (query.Length == 0) ShowSearchPrompt();
-            else AddFishGroup($"FISH - {matches.Length} matches", matches, true);
+            else AddFishGroup("MATCHES", matches, true, countFirst: true);
         });
         fishList.ScrollToStart();
         if (query.Length == 0) return;
@@ -132,10 +132,10 @@ public sealed partial class NativeJournalWindow
 
     private readonly List<FishListItem> fishItems = new();
 
-    private void AddFishGroup(string heading, IReadOnlyList<JournalFish> fish, bool revealNames)
+    private void AddFishGroup(string heading, IReadOnlyList<JournalFish> fish, bool revealNames, bool countFirst = false)
     {
         if (fishItems.Count > 0) fishItems.Add(new FishListDivider());
-        fishItems.Add(new FishListHeading($"{heading}   {fish.Count}"));
+        fishItems.Add(new FishListHeading(countFirst ? $"{fish.Count} {heading}" : $"{heading}   {fish.Count}"));
         if (fish.Count == 0)
         {
             fishItems.Add(new FishListMessage("None", 23.0f, Wrap: false));

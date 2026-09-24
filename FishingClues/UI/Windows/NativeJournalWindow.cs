@@ -218,6 +218,9 @@ public sealed partial class NativeJournalWindow(
         JournalRegion? forceRegion = null;
         JournalArea? forceArea = null;
         JournalSpot? forceSpot = null;
+        // Only for the newly-discovered-hole case: zoom the map to it, the same as
+        // clicking it in the area list does, rather than just opening its area.
+        bool zoomToForcedSpot = false;
 
         if (options.PendingDiscoveredSpotId is uint discoveredId)
         {
@@ -228,6 +231,7 @@ public sealed partial class NativeJournalWindow(
                 forceRegion = candidateRegion;
                 forceArea = candidateArea;
                 forceSpot = candidateArea.Spots.First(s => s.Id == discoveredId);
+                zoomToForcedSpot = true;
                 break;
             }
         }
@@ -250,7 +254,7 @@ public sealed partial class NativeJournalWindow(
         JournalRegion initialRegion = forceRegion
             ?? regions.FirstOrDefault(region => region.Name == sessionState.SelectedRegion)
             ?? regions[0];
-        SelectRegion(initialRegion, true, forceArea, forceSpot);
+        SelectRegion(initialRegion, true, forceArea, forceSpot, zoomToForcedSpot);
     }
 
     private void CreateGuideSearch()
@@ -273,7 +277,7 @@ public sealed partial class NativeJournalWindow(
         };
         searchButton.AttachNode(this);
         if (!string.IsNullOrWhiteSpace(searchText)) searchPending = true;
-        else ShowSearchPrompt();
+        else FillFishList(ShowSearchPrompt);
         LayoutAttachedNodes();
     }
 

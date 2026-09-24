@@ -13,8 +13,10 @@ namespace FishingClues.UI.Windows;
 public sealed partial class NativeJournalWindow
 {
     // forceOpenArea and forceSelectSpot override the remembered view: used to open at the player's
-    // location and at a newly discovered hole.
-    private void SelectRegion(JournalRegion region, bool restoring = false, JournalArea? forceOpenArea = null, JournalSpot? forceSelectSpot = null)
+    // location and at a newly discovered hole. zoomToForcedSpot additionally zooms the map to
+    // forceSelectSpot, as if it had been clicked; only the newly-discovered-hole case asks for that.
+    private void SelectRegion(JournalRegion region, bool restoring = false, JournalArea? forceOpenArea = null,
+        JournalSpot? forceSelectSpot = null, bool zoomToForcedSpot = false)
     {
         if (!restoring && selectedRegion is not null) SaveViewState();
         sessionState.Regions.TryGetValue(region.Name, out var remembered);
@@ -51,7 +53,7 @@ public sealed partial class NativeJournalWindow
         JournalSpot? restoredSpot = region.Areas.SelectMany(a => a.Spots)
             .FirstOrDefault(spot => spot.IsUnlocked && spot.Id == sessionState.SelectedSpot);
         if (restoredSpot is not null) {
-            SelectSpot(restoredSpot);
+            SelectSpot(restoredSpot, zoomToSpot: zoomToForcedSpot);
             var restoredRow = fishButtons.FirstOrDefault(p => p.Value == sessionState.SelectedFish).Key;
             if (restoredRow is not null) ToggleFishSelection(restoredRow.Fish);
         }

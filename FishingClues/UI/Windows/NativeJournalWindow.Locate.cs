@@ -13,8 +13,8 @@ namespace FishingClues.UI.Windows;
 // the area map is shown.
 public sealed partial class NativeJournalWindow
 {
-    private const string LocateTooltip = "Select the fishing hole you are currently at";
-    private const string LocateDisabledTooltip = "Select the fishing hole you are currently at (you are not at an unlocked fishing hole)";
+    private const string LocateTooltip = "Select the nearest fishing hole";
+    private const string LocateDisabledTooltip = "Select the nearest fishing hole (no unlocked fishing holes in this area)";
     private const long LocateCheckIntervalMs = 400;
 
     private TextureButtonNode? locateButton;
@@ -93,27 +93,26 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // The unlocked fishing hole whose range circle (the same one drawn on the
-    // map) the player is standing inside, nearest one if several overlap; null
-    // when the player is in no unlocked hole's range.
+    // The nearest unlocked fishing hole in the player's current zone; null only
+    // when the zone has no unlocked holes at all. Previously this required the
+    // player to be standing inside the hole's range circle, but that circle
+    // (derived from the sheet's casting Radius) is often smaller than where the
+    // hole actually lets you fish, which left the button greyed out while
+    // standing right at an unlocked hole.
     private JournalSpot? FindCurrentHole()
     {
         uint territory = Services.ClientState.TerritoryType;
-        var player = Services.ObjectTable.LocalPlayer;
-        if (territory == 0 || player is null || ResolvePlayerMapInfo(territory) is not var (scale, offsetX, offsetY))
-            return null;
-        Vector2 playerPixel = new((player.Position.X + offsetX) * scale + 1024.0f, (player.Position.Z + offsetY) * scale + 1024.0f);
+        if (territory == 0) return null;
 
-        JournalSpot? best = null;
-        float bestDistance = float.MaxValue;
-        foreach (JournalSpot spot in regions.SelectMany(r => r.Areas).SelectMany(a => a.Spots))
-        {
-            if (spot.TerritoryId != territory || !spot.IsUnlocked || spot.MapPixelPosition is not Vector2 pixel) continue;
-            float distance = Vector2.Distance(playerPixel, pixel);
-            if (distance > MarkerCircleRawDiameter(spot) / 2.0f || distance >= bestDistance) continue;
-            best = spot;
-            bestDistance = distance;
-        }
-        return best;
+        var candidates = regions.SelectMany(r => r.Areas).SelectMany(a => a.Spots)
+            .Where(s => s.TerritoryId == territory && s.IsUnlocked).ToList();
+        if (candidates.Count <= 1) return candidates.Count == 0 ? null : candidates[0];
+
+        var player = Services.ObjectTable.LocalPlayer;
+        if (player is null || ResolvePlayerMapInfo(territory) is not var (scale, offsetX, offsetY))
+            return candidates[0];
+
+        Vector2 playerPixel = new((player.Position.X + offsetX) * scale + 1024.0f, (player.Position.Z + offsetY) * scale + 1024.0f);
+        return candidates.MinBy(spot => spot.MapPixelPosition is Vector2 pixel ? Vector2.Distance(playerPixel, pixel) : float.MaxValue);
     }
 }

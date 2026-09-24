@@ -37,7 +37,9 @@ public sealed class AvailabilityService
         bool timeGated = condition.StartHour != 0 || condition.EndHour != 24;
         bool weatherGated = condition.Weather.Count > 0;
         bool prevWeatherGated = condition.PreviousWeather.Count > 0;
-        if (!timeGated && !weatherGated && !prevWeatherGated)
+        bool intuitionGated = condition.IntuitionSeconds is int intuitionWindow && intuitionWindow > 0
+            && condition.Predators.Any(p => p.Count >= 2);
+        if (!timeGated && !weatherGated && !prevWeatherGated && !intuitionGated)
             return null;
 
         uint weatherRateId = 0;
@@ -56,27 +58,45 @@ public sealed class AvailabilityService
         bool weatherOk = !weatherGated || (currentWeather is uint cw && condition.Weather.Contains(cw));
         uint? prevWeather = prevWeatherGated ? GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(EorzeaWeather.WindowStart(now) - EorzeaWeather.SecondsPerWeatherWindow)) : null;
         bool prevOk = !prevWeatherGated || (prevWeather is uint pw && condition.PreviousWeather.Contains(pw));
+        // Player-triggered, unlike the others: read fresh every call, so this ticks
+        // down live with the game's own buff timer instead of a calculated end time.
+        IntuitionStatus? intuition = intuitionGated ? IntuitionService.GetActive() : null;
+        bool intuitionOk = !intuitionGated || IsMatchingIntuition(fish, intuition);
 
         // The sentences themselves (see FishDetailsFormatter.AvailableSentence and
         // WaitingSentence) are shared with the fish details, so the badges and the
         // details always word the requirements identically.
-        if (timeOk && weatherOk && prevOk)
+        if (timeOk && weatherOk && prevOk && intuitionOk)
         {
-            string availableTooltip = formatter.AvailableSentence(condition);
+            string availableTooltip = !intuitionGated
+                ? formatter.AvailableSentence(condition)
+                : FishDetailsFormatter.IsGated(condition)
+                    ? $"Intuition catch window is open. {formatter.AvailableSentence(condition)}"
+                    : "Intuition catch window is open.";
 
             if (configuration.DisableAvailabilityCountdown)
                 return new FishAvailabilityInfo(true, availableTooltip, availableTooltip);
 
-            long? end = FindAvailabilityEnd(condition, weatherRateId, weatherGated, prevWeatherGated, timeGated, now);
-            string availableCountdown = end is long endTime
-                ? $"Ends in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, endTime - now)))}"
-                : "Not ending soon";
+            string availableCountdown;
+            if (intuitionGated)
+                availableCountdown = $"Ends in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, intuition!.RemainingSeconds)))}";
+            else
+            {
+                long? end = FindAvailabilityEnd(condition, weatherRateId, weatherGated, prevWeatherGated, timeGated, now);
+                availableCountdown = end is long endTime
+                    ? $"Ends in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, endTime - now)))}"
+                    : "Not ending soon";
+            }
             return new FishAvailabilityInfo(true, $"{availableCountdown} | {availableTooltip}", availableTooltip);
         }
 
-        string tooltip = formatter.WaitingSentence(condition);
+        // Intuition is player-triggered, so there's no "starts in" to calculate for it -
+        // say what to do instead. If time/weather are also unmet, that's said first.
+        string tooltip = intuitionGated && !intuitionOk
+            ? (timeOk && weatherOk && prevOk ? formatter.IntuitionSentence(condition, fish.SpotId) : $"{formatter.WaitingSentence(condition)} {formatter.IntuitionSentence(condition, fish.SpotId)}")
+            : formatter.WaitingSentence(condition);
 
-        if (configuration.DisableAvailabilityCountdown)
+        if (configuration.DisableAvailabilityCountdown || (intuitionGated && !intuitionOk))
             return new FishAvailabilityInfo(false, tooltip, tooltip);
 
         long? next = FindNextAvailability(condition, weatherRateId, weatherGated, prevWeatherGated, now);
@@ -84,6 +104,25 @@ public sealed class AvailabilityService
             ? $"Starts in {FormatCountdown(TimeSpan.FromSeconds(Math.Max(0, nextTime - now)))}"
             : "Not starting soon";
         return new FishAvailabilityInfo(false, $"{waitingCountdown} | {tooltip}", tooltip);
+    }
+
+    // Matches the live Intuition buff to this specific fish. Param is presumed to carry the
+    // FishParameter or item ID of the fish it unlocks (unverified against a live game - if
+    // badges don't line up with what's actually open, that assumption needs checking). As a
+    // fallback when Param doesn't match anything, or its meaning turns out to be something
+    // else entirely, this also accepts the buff for a fish if it's the only intuition-gated
+    // fish at that hole, which covers the common case without guessing wrong at a hole that
+    // has more than one.
+    private bool IsMatchingIntuition(JournalFish fish, IntuitionStatus? intuition)
+    {
+        if (intuition is null) return false;
+        if (intuition.Param == fish.FishParameterId || intuition.Param == fish.ItemId) return true;
+        if (fish.SpotId == 0) return false;
+        JournalSpot? spot = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots).FirstOrDefault(s => s.Id == fish.SpotId);
+        if (spot is null) return false;
+        int intuitionFishAtSpot = spot.Fish.Count(f => fishData.Data.Fish.TryGetValue(f.ItemId, out var c)
+            && c.IntuitionSeconds is int seconds && seconds > 0 && c.Predators.Any(p => p.Count >= 2));
+        return intuitionFishAtSpot == 1;
     }
 
     private uint? ResolveTerritoryId(JournalFish fish)

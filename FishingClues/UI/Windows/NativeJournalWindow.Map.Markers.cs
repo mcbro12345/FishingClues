@@ -226,19 +226,4 @@ public sealed partial class NativeJournalWindow
         unsafe { UIGlobals.PlaySoundEffect(UiClickSoundEffectId); }
         NavigateToSpot(data.Spot);
     }
-
-    private void DisposeMarkers()
-    {
-        foreach (var (icon, data) in mapMarkers)
-        {
-            icon.Dispose();
-            data.Circle.Dispose();
-        }
-        mapMarkers.Clear();
-        DisposePlayerMarker();
-        foreach (var tip in markerTooltips.Values) tip.Dispose();
-        markerTooltips.Clear();
-        measuredTooltips.Clear();
-        hoveredMarker = null;
-    }
 }

@@ -52,7 +52,7 @@ public sealed class GuideDetailsService
                 links[formatter.ItemName(id)] = id;
         return new GuideDetails(fish.IdentityVisible ? fish.Name : "????", info,
             locations.DistinctBy(l => (l.SpotId, l.Spearfishing)).ToArray(),
-            location => SelectedCatchDetails(fish.ItemId, location), links);
+            location => SelectedCatchDetails(fish, location), links);
     }
 
     // these relic fish require a specific pole; ordinary fish don't
@@ -70,16 +70,18 @@ public sealed class GuideDetailsService
     private int MinimumGathering(uint fish, uint hole) =>
         fishData.Data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(hole, out var entry) ? entry.MinimumGathering : 0;
 
-    private IReadOnlyList<string> SelectedCatchDetails(uint fish, GuideLocation location)
+    // A fish looked at from a hole's list (SpotId set) keeps that hole's undiscovered fish
+    // unnamed in the lines below; the guide search (SpotId 0) has everything revealed.
+    private IReadOnlyList<string> SelectedCatchDetails(JournalFish journalFish, GuideLocation location)
     {
-        var requirements = formatter.BuildRequirementLines(fish);
-        var lines = new List<string> { requirements.FirstOrDefault(l => l.StartsWith("Hook:")) ?? "Hook: Unknown" };
+        uint fish = journalFish.ItemId;
+        var requirements = formatter.BuildRequirementLines(fish, nameSpotId: journalFish.SpotId);
+        // Spearfishing has no hook or bait; what matters is the gig, the shadow's size and speed,
+        // and any time/weather requirement, so it gets its own short list instead of the fishing one.
         if (location.Spearfishing)
-        {
-            lines.Add("A spearfishing gig is required.");
-            lines.Add("Bait: Not used.");
-            return lines;
-        }
+            return new[] { "Method: Spearfishing gig required." }.Concat(requirements.Where(l =>
+                !l.StartsWith("Hook:") && !l.StartsWith("Method:") && l != "No special requirements." && l != "Fish Eyes: supported")).ToList();
+        var lines = new List<string> { requirements.FirstOrDefault(l => l.StartsWith("Hook:")) ?? "Hook: Unknown" };
         int minimum = MinimumGathering(fish, location.SpotId);
         if (minimum > 0) lines.Add($"Total Item Level required: {minimum} (all equipped gear).");
         if (RequiredPole(fish) != 0) lines.Add($"Required pole: {formatter.ItemName(RequiredPole(fish))}");
@@ -90,7 +92,7 @@ public sealed class GuideDetailsService
             var mooch = formatter.SortByItemLevel(ids.Where(IsFish)).ToArray();
             var bait = formatter.OrderBait(ids.Where(id => !IsFish(id))).Select(formatter.ItemName).ToArray();
             lines.Add("Bait: " + (bait.Length > 0 ? string.Join(", ", bait) : mooch.Length > 0 ? "None (mooch only)." : "Unknown."));
-            lines.Add("Mooch: " + (mooch.Length > 0 ? string.Join(", ", mooch.Select(formatter.ItemName)) : "None."));
+            lines.Add("Mooch: " + (mooch.Length > 0 ? string.Join(", ", mooch.Select(id => formatter.SpoilerSafeName(id, journalFish.SpotId))) : "None."));
         }
         else { lines.Add("Bait: Unknown for this location."); lines.Add("Mooch: Unknown."); }
         lines.AddRange(requirements.Where(l => !l.StartsWith("Hook:") && l != "No special requirements." && l != "Fish Eyes: supported"));

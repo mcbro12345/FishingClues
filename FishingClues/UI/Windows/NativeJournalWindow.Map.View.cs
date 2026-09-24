@@ -55,16 +55,18 @@ public sealed partial class NativeJournalWindow
     private void ClampMapPan()
     {
         float scale = MapScale();
-        (float minPanX, float maxPanX) = ClampedPanRange(MapClipWidth / scale);
-        (float minPanY, float maxPanY) = ClampedPanRange(MapClipHeight / scale);
+        bool zoomedOut = mapZoom <= MinMapZoom + 0.001f;
+        (float minPanX, float maxPanX) = ClampedPanRange(MapClipWidth / scale, zoomedOut);
+        (float minPanY, float maxPanY) = ClampedPanRange(MapClipHeight / scale, zoomedOut);
         mapPanX = Math.Clamp(mapPanX, minPanX, maxPanX);
         mapPanY = Math.Clamp(mapPanY, minPanY, maxPanY);
     }
 
     // A view smaller than the 2048px map may pan half a view past each edge, so
-    // any point can be brought to the middle. One that already fits the whole
-    // map has no room to move and stays centered.
-    private static (float Min, float Max) ClampedPanRange(float viewSize)
+    // any point can be brought to the middle - but only once zoomed in. Zoomed all
+    // the way out it stays inside the map, so the black backdrop never shows.
+    // A view that already fits the whole map has no room to move and stays centered.
+    private static (float Min, float Max) ClampedPanRange(float viewSize, bool keepInsideMap)
     {
         float freeSpace = 2048.0f - viewSize;
         if (freeSpace <= 0.0f)
@@ -72,7 +74,7 @@ public sealed partial class NativeJournalWindow
             float centered = freeSpace / 2.0f;
             return (centered, centered);
         }
-        return (-viewSize / 2.0f, freeSpace + viewSize / 2.0f);
+        return keepInsideMap ? (0.0f, freeSpace) : (-viewSize / 2.0f, freeSpace + viewSize / 2.0f);
     }
 
     private void ApplyMapPan()

@@ -33,7 +33,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
 
         fishData = new FishDataService();
         journal = new JournalBuilder(fishData, configuration);
-        var formatter = new FishDetailsFormatter(fishData, configuration);
+        var formatter = new FishDetailsFormatter(fishData, journal, configuration);
         var availability = new AvailabilityService(fishData, journal, formatter, configuration);
         var guideDetails = new GuideDetailsService(fishData, journal, formatter);
         windowManager = new WindowManager(configuration, fishData, journal, availability, formatter, guideDetails, ShowDiagnostics);

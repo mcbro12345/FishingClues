@@ -84,11 +84,14 @@ public sealed partial class NativeJournalWindow
         mapZoom = MinMapZoom;
         restoreMapView = sessionState.MapZoom > 0.0f;
 
-        mapCaptionDivider = new HorizontalLineNode { Height = 2.0f };
+        // Starts hidden (LayoutMapPanel turns it back on once it knows whether the map is
+        // open) - a node is visible from creation until something says otherwise, and it
+        // has no position yet either.
+        mapCaptionDivider = new HorizontalLineNode { Height = 2.0f, IsVisible = false };
         mapCaptionDivider.AttachNode(this);
-        mapAreaName = new LabelTextNode { Height = 18.0f, FontSize = 14, String = "" };
+        mapAreaName = new LabelTextNode { Height = 18.0f, FontSize = 14, String = "", IsVisible = false };
         mapAreaName.AttachNode(this);
-        mapDiscoveredLabel = new LabelTextNode { Height = 16.0f, FontSize = 12, String = "" };
+        mapDiscoveredLabel = new LabelTextNode { Height = 16.0f, FontSize = 12, String = "", IsVisible = false };
         mapDiscoveredLabel.AttachNode(this);
 
         mapClip = new ResNode { NodeFlags = NodeFlags.Clip | NodeFlags.Visible };
@@ -287,9 +290,19 @@ public sealed partial class NativeJournalWindow
         return report.ToString();
     }
 
+    // Called only from OnFinalize, after base.OnFinalize(addon) has already torn down
+    // the whole native node tree the window owns (everything below was attached under
+    // `this`). So this only drops the C# references - it must not call .Dispose() on
+    // any of them, or it double-frees native memory the base class just freed, which
+    // showed up as an intermittent game crash on closing the window.
     private void DisposeMapPanel()
     {
-        DisposeMarkers();
+        mapMarkers.Clear();
+        markerTooltips.Clear();
+        measuredTooltips.Clear();
+        hoveredMarker = null;
+        playerCone = null;
+        playerMarker = null;
         mapImage = null;
         mapBackdrop = null;
         mapContent = null;

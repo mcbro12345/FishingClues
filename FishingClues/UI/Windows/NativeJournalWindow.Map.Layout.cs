@@ -45,8 +45,10 @@ public sealed partial class NativeJournalWindow
             mapCaptionDivider.Position = contentOrigin + new Vector2(areaX + MapDividerOffsetX, captionTop - MapDividerHeight + MapDividerOffsetY);
             mapCaptionDivider.Width = areaWidth;
         }
-        if (!mapOn) return;
-
+        // Kept up to date even while the map (and this caption) is hidden: a newly created
+        // node is visible until something positions and hides it, so if a frame ever renders
+        // before that happens, it should be in its normal spot above the map rather than
+        // wherever it defaulted to (the window's top-left corner).
         Vector2 titleOffset = new(MapTitleOffsetX, MapTitleOffsetY);
         if (mapAreaName is not null)
         {
@@ -58,6 +60,7 @@ public sealed partial class NativeJournalWindow
             mapDiscoveredLabel.Position = contentOrigin + new Vector2(areaX, captionTop + 18.0f) + titleOffset;
             mapDiscoveredLabel.Width = areaWidth;
         }
+        if (!mapOn) return;
 
         Vector2 clipPosition = contentOrigin + new Vector2(areaX, captionTop + MapCaptionHeight - MapPanelSpacing);
         if (mapClip is not null)
