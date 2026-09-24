@@ -16,9 +16,7 @@ using FishingClues.UI;
 
 namespace FishingClues.Game.Logic;
 
-// Intercepts the vanilla Fishing Log, both the menu command and the addon
-// itself, and swaps in the journal window. Hands control back when the player
-// explicitly opens the real one, and returns to the journal when it closes.
+// swaps the vanilla Fishing Log for the journal, hands back when the real one is opened on purpose
 public sealed class NormalLogReplacementController
 {
     private const long ReplacementCooldownMs = 1000;
@@ -69,10 +67,13 @@ public sealed class NormalLogReplacementController
         Services.AddonLifecycle.UnregisterListener(OnNormalLogClosed);
     }
 
-    // Called after the hook is disposed, so this reaches the game's own handler.
     public unsafe void RestoreVanillaLog()
     {
-        if (fishingLogCommandId == 0) return;
+        if (fishingLogCommandId != 0) RunFishingLogCommand();
+    }
+
+    private unsafe void RunFishingLogCommand()
+    {
         UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
         if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
     }
@@ -144,7 +145,6 @@ public sealed class NormalLogReplacementController
         ReplaceVanillaLog(now, agent, agentActive, ptr, addonVisible);
     }
 
-    // The Fishing Log was picked from the game menu: open the journal instead.
     private unsafe void HandleMenuRequest()
     {
         menuOpenRequested = false;
@@ -160,7 +160,6 @@ public sealed class NormalLogReplacementController
         windowManager.ToggleNativeJournal();
     }
 
-    // The vanilla log was closed: reopen the journal once the old window is gone.
     private void HandlePendingReturn(long now, bool addonVisible)
     {
         replacementRequested = false;
@@ -201,8 +200,7 @@ public sealed class NormalLogReplacementController
         else ReturnStatus = $"Close observed; skipped (replacement={configuration.ReplaceNormalFishingLog}, loggedIn={Services.ClientState.IsLoggedIn}).";
     }
 
-    // Hides the vanilla log and opens the journal. The journal's own open sound is
-    // silenced because the vanilla log has just played one.
+    // hide the vanilla log and open the journal, no open sound since vanilla just played one
     private unsafe void ReplaceVanillaLog(long now, AgentFishingNote* agent, bool agentActive, AtkUnitBasePtr ptr, bool addonVisible)
     {
         lastReplacement = now;
@@ -217,11 +215,7 @@ public sealed class NormalLogReplacementController
         windowManager.ToggleNativeJournal(silenceOpenSound: true);
     }
 
-    // PostSetup and PreDraw run inside the game's own addon lifecycle, so this
-    // only flags the request. Hiding or closing the addon (or its agent) from
-    // inside that callback corrupts AgentFishingNote's region and spot data,
-    // leaving the vanilla log's lists empty until the game restarts. The hide and
-    // close happen on the next framework tick (ReplaceVanillaLog).
+    // only flags it: hiding/closing the addon inside PostSetup/PreDraw corrupts AgentFishingNote's region and spot data (lists stay empty until restart), so ReplaceVanillaLog does it next tick
     private void OnFishingNoteIntercept(AddonEvent eventType, AddonArgs args)
     {
         if (normalLogReturnPending) return;
@@ -230,7 +224,7 @@ public sealed class NormalLogReplacementController
         replacementRequested = true;
     }
 
-    // Deferred to the next framework tick, outside the game's hide/finalize callback.
+    // runs next tick, outside the game's hide/finalize callback
     private void OnNormalLogClosed(AddonEvent eventType, AddonArgs args)
     {
         if (allowExplicitVanillaLog || normalLogWasVisible)
@@ -248,7 +242,6 @@ public sealed class NormalLogReplacementController
             : "Open requested, but custom addon is not visible; check plugin log for setup errors.";
     }
 
-    // The button in the journal that opens the real Fishing Log.
     public unsafe void OpenNormalFishingLog()
     {
         AgentFishingNote* agent = AgentFishingNote.Instance();
@@ -261,11 +254,7 @@ public sealed class NormalLogReplacementController
         ReturnStatus = "Normal log explicitly opened; waiting for close.";
         replacementRequested = false;
         // Showing the agent alone can leave an empty shell if the command was intercepted before.
-        if (fishingLogCommandId != 0)
-        {
-            UIModuleInterface* module = (UIModuleInterface*)UIModule.Instance();
-            if (module != null) module->ExecuteMainCommand(fishingLogCommandId);
-        }
+        if (fishingLogCommandId != 0) RunFishingLogCommand();
         else ((AgentInterface*)agent)->Show();
     }
 }

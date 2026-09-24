@@ -6,13 +6,13 @@ using KamiToolKit.Nodes;
 
 using FishingClues.Base;
 using FishingClues.Game.Models;
+using FishingClues.UI.Components;
 
 namespace FishingClues.UI.Windows;
 
-// Where everything sits: the column widths, the layout pass, and the area dropdowns' widths.
+// layout pass, column widths, dropdown widths
 public sealed partial class NativeJournalWindow
 {
-    // The positions and sizes of the details panel's parts, for the diagnostics report.
     public unsafe string DescribeDetailsLayout()
     {
         if (fishList is null || detailsList is null || detailsDivider is null || detailsBottomDivider is null)
@@ -26,7 +26,6 @@ public sealed partial class NativeJournalWindow
             + $"bottomDivider y={detailsBottomDivider.Y:0.###} visible={detailsBottomDivider.IsVisible} screenY={bottom->ScreenY:0.#}";
     }
 
-    // The region and area column widths after clamping to the window.
     private (float Region, float Area) ColumnWidths()
     {
         float region = Math.Clamp(regionWidthSetting, 130.0f, 280.0f);
@@ -47,23 +46,23 @@ public sealed partial class NativeJournalWindow
         if (!IsOpen)
             return;
 
-        // Laying the lists out again resets their scroll, so keep it.
-        float regionScroll = regionList?.ScrollBarNode.ScrollPosition ?? 0;
-        float areaScroll = areaList?.ScrollBarNode.ScrollPosition ?? 0;
-        float fishScroll = fishList?.ScrollBarNode.ScrollPosition ?? 0;
-        float detailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
-
-        SetWindowSize(Size);
-        LayoutAttachedNodes();
-        RefreshSelectedDetails();
-
-        if (regionList is not null) RestoreScroll(regionList, regionScroll);
-        if (areaList is not null) RestoreScroll(areaList, areaScroll);
-        if (fishList is not null) RestoreScroll(fishList, fishScroll);
-        if (detailsList is not null) RestoreScroll(detailsList, detailsScroll);
+        // relayout resets scroll, keep it
+        KeepingScroll(() =>
+        {
+            SetWindowSize(Size);
+            LayoutAttachedNodes();
+            RefreshSelectedDetails();
+        }, regionList, areaList, fishList, detailsList);
     }
 
-    // Re-renders the open fish's details so settings like the time format apply to it.
+    private void KeepingScroll(Action relayout, params ScrollingNode<JournalListNode>?[] lists)
+    {
+        var saved = lists.Select(list => list?.ScrollBarNode.ScrollPosition ?? 0).ToArray();
+        relayout();
+        for (int i = 0; i < lists.Length; i++)
+            RestoreScroll(lists[i], saved[i]);
+    }
+
     private void RefreshSelectedDetails()
     {
         if (selectedFish == 0) return;
@@ -137,7 +136,7 @@ public sealed partial class NativeJournalWindow
         }
         if (summaryDivider is not null)
         {
-            // In the fish guide the same divider separates the search bar from the results.
+            // same divider separates the search bar from the results in the guide
             summaryDivider.Position = contentOrigin + new Vector2(fishX, GuideMode ? SearchDividerY : HeaderHeight + 52);
             summaryDivider.Width = GuideMode ? fishWidth : fishWidth - 10;
             summaryDivider.IsVisible = true;
@@ -156,7 +155,6 @@ public sealed partial class NativeJournalWindow
         }
         if (searchInput is not null) {
             searchInput.Position = contentOrigin;
-            // The button fills the rest of the row, right up against the input.
             searchInput.Width = Math.Max(100, fishWidth - SearchButtonWidth);
             if (searchButton is not null)
             {
@@ -170,8 +168,7 @@ public sealed partial class NativeJournalWindow
         RefreshFishListLayout();
         if (detailsList is not null && detailsDivider is not null)
         {
-            // With no fish selected the panel shrinks to a strip holding its hint. The
-            // saved height ratio is untouched, so the panel reopens at the same size.
+            // no fish selected: shrink to a strip with the hint, saved ratio untouched
             detailsLaidOutOpen = DetailsOpen;
             float ratio = float.IsFinite(configuration.DetailsHeightRatio) ? configuration.DetailsHeightRatio : 0.38f;
             float detailsHeight = DetailsOpen
@@ -188,11 +185,7 @@ public sealed partial class NativeJournalWindow
                 dividerHandle.Position = fishList.Position + new Vector2(0, fishHeight);
                 dividerHandle.Size = new Vector2(fishWidth, 12);
             }
-            // The game applies a node's new size at once but only redraws it at its new
-            // position a frame later (its diagnostics report showed the on-screen Y
-            // trailing the set Y by exactly one frame). While dragging the details
-            // divider the moving nodes' sizes therefore use last frame's values, so
-            // each list's edge stays put against its divider instead of running ahead.
+            // new sizes apply at once but redraw a frame late, so while dragging use last frame's sizes to keep each list's edge on its divider
             float appliedFishHeight = fishHeight, appliedDetailsHeight = detailsHeight;
             if (draggingDivider && dragKind == 0 && !float.IsNaN(previousFishHeight))
             {
@@ -204,8 +197,7 @@ public sealed partial class NativeJournalWindow
             fishList.Height = appliedFishHeight;
             detailsDivider.Position = fishList.Position + new Vector2(0, fishHeight);
             detailsDivider.Width = fishWidth;
-            // The list runs from just under the top divider to just above the bottom
-            // one, so scrolled text is cut off flush at the divider lines.
+            // runs between the dividers so scrolled text is cut flush
             Vector2 panelOrigin = fishList.Position + new Vector2(0, fishHeight + 2.0f);
             detailsList.Position = panelOrigin + new Vector2(8, 0);
             detailsList.Size = new Vector2(fishWidth - 16, appliedDetailsHeight + 8.0f);
@@ -259,8 +251,7 @@ public sealed partial class NativeJournalWindow
     private const float MinDropdownWidth = 80.0f;
     private const float MaxDropdownInset = 150.0f;
 
-    // The inset settings are relative to a preferred baseline (see Configuration), and
-    // can be negative to let a dropdown extend past the edge of the area column.
+    // inset is relative to a baseline (see Configuration), can be negative
     private float EffectiveLeftInset() => Math.Clamp(
         dropdownLeftInsetSetting + Configuration.DropdownLeftInsetBaseline, -MaxDropdownInset, MaxDropdownInset);
     private float EffectiveRightInset() => Math.Clamp(
@@ -282,7 +273,7 @@ public sealed partial class NativeJournalWindow
             header.Width = width;
         areaList.ContentNode.RecalculateLayout();
         areaList.RecalculateSizes();
-        // RecalculateSizes lays the content out again, which resets every header's X, so the inset is applied after.
+        // RecalculateSizes resets header X, apply the inset after
         ReapplyDropdownLeftInset();
     }
 

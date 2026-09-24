@@ -10,9 +10,7 @@ using FishingClues.UI.Components;
 
 namespace FishingClues.UI.Windows;
 
-// The fish details panel. Like the fish list, it is described as items and matched
-// onto the nodes already there, so switching fish reuses them instead of replacing
-// them (a node that has just been created draws blank for a frame).
+// fish details panel, matched onto existing nodes so switching fish reuses them (new nodes draw blank for a frame)
 public sealed partial class NativeJournalWindow
 {
     private const float TightLineHeight = 18.0f;
@@ -25,20 +23,17 @@ public sealed partial class NativeJournalWindow
     private sealed record DetailSelector : DetailItem;
     private sealed record DetailBody : DetailItem;
 
-    // The panel's own items, and those of the body under the name (which is refilled alone
-    // when the guide's location changes).
+    // panel items and the body under the name (refilled alone when the guide location changes)
     private readonly List<DetailItem> detailItems = new();
     private readonly List<DetailItem> bodyItems = new();
     private JournalListNode? catchBody;
     private bool writingCatchBody;
 
-    // The details panel is open while a fish is selected.
     private bool DetailsOpen => selectedDetails is not null;
 
     private void ClearDetails()
     {
-        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HideTooltip();
-        partialHover = null;
+        HidePartialHoverTooltip();
         catchBody = null;
         writingCatchBody = false;
         selectedDetails = null;
@@ -60,9 +55,7 @@ public sealed partial class NativeJournalWindow
         detailsList.ContentNode.FirstItemSpacing = 0.0f;
         if (selectedGuide is not null)
         {
-            // The name is in the same font and size as the Region / Area / Fish headings. It is always
-            // a link-style row (plain text when the fish is unknown), so the layout is the same for
-            // known and unknown fish and switching between them reuses the same nodes.
+            // the name row is always link-style so known and unknown fish share the same nodes
             AddDetailLine(UnknownFishName(selectedGuide.Name), HeadingFontSize, FontType.Jupiter, forceRow: true);
             if (GuideMode) detailItems.Add(new DetailSelector());
             detailItems.Add(new DetailBody());
@@ -81,7 +74,6 @@ public sealed partial class NativeJournalWindow
         SyncDetailsLayout();
     }
 
-    // Refills just the part under the name, for a change of location in the guide.
     private void RenderCatchBody()
     {
         if (catchBody is null || selectedGuide is null) return;
@@ -122,12 +114,17 @@ public sealed partial class NativeJournalWindow
     }
 
     private void ApplyDetailItems(JournalListNode list, List<DetailItem> items)
+        => ReconcileNodes(list, items, DetailItemMatches, CreateDetailNode, UpdateDetailNode);
+
+    // makes the list's nodes line up with items, reusing a node while its shape still fits
+    // and dropping it and everything after it once it stops fitting
+    private static void ReconcileNodes<T>(LayoutListNode list, IReadOnlyList<T> items,
+        Func<NodeBase, T, bool> matches, Func<T, NodeBase> create, Action<NodeBase, T> update)
     {
         var existing = list.Nodes.ToList();
         for (int i = 0; i < items.Count; i++)
         {
-            // When the shapes stop matching, drop this node and everything after it.
-            if (i < existing.Count && !DetailItemMatches(existing[i], items[i]))
+            if (i < existing.Count && !matches(existing[i], items[i]))
             {
                 for (int j = existing.Count - 1; j >= i; j--) list.RemoveNode(existing[j]);
                 existing.RemoveRange(i, existing.Count - i);
@@ -136,15 +133,14 @@ public sealed partial class NativeJournalWindow
             if (i < existing.Count) node = existing[i];
             else
             {
-                node = CreateDetailNode(items[i]);
+                node = create(items[i]);
                 list.AddNode(node);
                 existing.Add(node);
             }
-            UpdateDetailNode(node, items[i]);
+            update(node, items[i]);
         }
         for (int j = existing.Count - 1; j >= items.Count; j--) list.RemoveNode(existing[j]);
     }
-
     private static bool DetailItemMatches(NodeBase node, DetailItem item) => item switch
     {
         // a heading and a plain line are laid out differently, so they never share a node
@@ -178,8 +174,7 @@ public sealed partial class NativeJournalWindow
                 // wrapped lines sit closer together than the default
                 label.LineSpacing = 18 + (labelItem.FontSize - 14) * 3 / 2;
                 if (labelItem.Font is FontType font) label.FontType = font;
-                // The heading has a fixed box with its text at the bottom, so it sits in the same
-                // place whatever the name and its tall glyphs aren't clipped at the top.
+                // bottom-aligned in a fixed box so tall glyphs aren't clipped
                 if (labelItem.FontSize > 14) label.AlignmentType = AlignmentType.BottomLeft;
                 label.String = labelItem.Text;
                 label.Height = LineHeight(label);
@@ -200,15 +195,13 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // Opens or closes the details panel as soon as the selection changes, rather than a
-    // frame later, so the new contents never show in a panel that is still the old size.
+    // open/close as soon as the selection changes so new contents never show in a panel of the old size
     private void SyncDetailsLayout()
     {
         if (DetailsOpen != detailsLaidOutOpen) LayoutAttachedNodes();
     }
 
-    // An undiscovered fish is headed "Unknown Fish N", numbered like its list entry.
-    // (The heading font draws '#' as a numero sign, so there is no symbol.)
+    // undiscovered fish are "Unknown Fish N" like their list entry (the heading font draws # as a numero sign)
     private string UnknownFishName(string name)
         => !GuideMode && unknownFishNumbers.TryGetValue(selectedFish, out int number) ? $"Unknown Fish {number}" : name;
 

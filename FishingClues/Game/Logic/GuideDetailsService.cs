@@ -9,7 +9,7 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.Game.Logic;
 
-// Builds the fish details panel: where a fish can be caught and what it needs there.
+// builds the fish details panel
 public sealed class GuideDetailsService
 {
     private readonly FishDataService fishData;
@@ -30,7 +30,7 @@ public sealed class GuideDetailsService
         var metadata = data.Info.GetValueOrDefault(fish.ItemId) ?? fish.Info;
         if ((fish.SpotId == 0 || fish.IdentityVisible) && !string.IsNullOrWhiteSpace(metadata?.Description)) info.Add(metadata.Description);
         var locations = new List<GuideLocation>();
-        var spots = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots)
+        var spots = journal.GetJournal().AllSpots()
             .Where(s => s.Fish.Any(f => f.ItemId == fish.ItemId) && (fish.SpotId == 0 || fish.SpotId == s.Id)).ToArray();
         foreach (var spot in spots) locations.Add(new GuideLocation(spot.Id, spot.Region, spot.Area, spot.Name));
         if (fish.SpotId == 0)
@@ -70,17 +70,15 @@ public sealed class GuideDetailsService
     private int MinimumGathering(uint fish, uint hole) =>
         fishData.Data.SpotBaits.TryGetValue(fish, out var spots) && spots.TryGetValue(hole, out var entry) ? entry.MinimumGathering : 0;
 
-    // A fish looked at from a hole's list (SpotId set) keeps that hole's undiscovered fish
-    // unnamed in the lines below; the guide search (SpotId 0) has everything revealed.
+    // SpotId set = looked at from a hole's list, so undiscovered fish stay unnamed. SpotId 0 = guide search, everything revealed
     private IReadOnlyList<string> SelectedCatchDetails(JournalFish journalFish, GuideLocation location)
     {
         uint fish = journalFish.ItemId;
-        var requirements = formatter.BuildRequirementLines(fish, nameSpotId: journalFish.SpotId);
-        // Spearfishing has no hook or bait; what matters is the gig, the shadow's size and speed,
-        // and any time/weather requirement, so it gets its own short list instead of the fishing one.
+        var requirements = formatter.BuildRequirementLines(fish, journalFish.SpotId, includeBaits: false);
+        // spearfishing gets its own short list, no hook or bait
         if (location.Spearfishing)
             return new[] { "Method: Spearfishing gig required." }.Concat(requirements.Where(l =>
-                !l.StartsWith("Hook:") && !l.StartsWith("Method:") && l != "No special requirements." && l != "Fish Eyes: supported")).ToList();
+                !l.StartsWith("Hook:") && l != "No special requirements." && l != "Fish Eyes: supported")).ToList();
         var lines = new List<string> { requirements.FirstOrDefault(l => l.StartsWith("Hook:")) ?? "Hook: Unknown" };
         int minimum = MinimumGathering(fish, location.SpotId);
         if (minimum > 0) lines.Add($"Total Item Level required: {minimum} (all equipped gear).");

@@ -34,7 +34,6 @@ public abstract unsafe partial class NodeBase {
         SetNodeEventFlags(eventType);
 
         if (eventHandlers.TryAdd(eventType, new EventHandlerInfo { OnActionDelegate = callback })) {
-            IPluginLog.Get().Verbose($"[{eventType}] Registered for {GetType()} [{(nint)ResNode:X}]");
             ResNode->AtkEventManager.RegisterEvent(eventType, 0, this, this, nodeEventListener, false);
         }
         else {
@@ -51,7 +50,6 @@ public abstract unsafe partial class NodeBase {
         SetNodeEventFlags(eventType);
 
         if (eventHandlers.TryAdd(eventType, new EventHandlerInfo { OnReceiveEventDelegate = callback })) {
-            IPluginLog.Get().Verbose($"[{eventType}] Registered for {GetType()} [{(nint)ResNode:X}]");
             ResNode->AtkEventManager.RegisterEvent(eventType, 0, this, this, nodeEventListener, false);
         }
         else {

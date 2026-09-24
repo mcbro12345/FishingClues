@@ -1,11 +1,9 @@
 using System;
 using System.Numerics;
 using System.Threading.Tasks;
-using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using KamiToolKit.Nodes;
-using Lumina.Data.Files;
 
 using FishingClues.Base;
 
@@ -13,21 +11,15 @@ using TerritoryTypeSheet = Lumina.Excel.Sheets.TerritoryType;
 
 namespace FishingClues.UI.Windows;
 
-// The player's own marker on the map: the game's blue drop icon and a light
-// cone showing where the camera faces. Both sit on the unscaled mapClip layer
-// and are placed by hand so they keep their size at any zoom.
+// player marker: blue drop icon plus camera cone, placed by hand on the unscaled layer
 public sealed partial class NativeJournalWindow
 {
     private const uint MapPlayerIconId = 60443;
     private const float MapPlayerIconSize = 32.0f;
-    // The centre hole of the drop inside its 32x32 icon, which sits on the
-    // player's position and is what the marker rotates around.
+    // the drop's centre hole, what the marker rotates around
     private static readonly Vector2 MapPlayerIconPivot = new(16.5f, 15.5f);
 
-    // The camera cone is the 96x96 sprite at (352,0) of NaviMap.tex, read from
-    // the 2x sheet NaviMap_hr1.tex (the 192x192 block at (704,0)). It fans out
-    // toward the upper right from a bright corner. Its origin is the point
-    // that lines the cone's rounded back up with the drop's.
+    // camera cone: 96x96 sprite at (352,0) of NaviMap.tex, cut from the 2x sheet. Origin lines its back up with the drop
     private const string MapConeSheetPath = "ui/uld/NaviMap_hr1.tex";
     private const int MapConeSheetX = 704;
     private const int MapConeSheetSize = 192;
@@ -56,7 +48,7 @@ public sealed partial class NativeJournalWindow
         };
         playerCone.AttachNode(playerLayer);
         _ = LoadPlayerConeAsync(playerCone);
-        playerMarker = new ImGuiImageNode
+        var marker = playerMarker = new ImGuiImageNode
         {
             Size = new Vector2(MapPlayerIconSize, MapPlayerIconSize),
             FitTexture = true,
@@ -65,83 +57,15 @@ public sealed partial class NativeJournalWindow
             IsVisible = false,
         };
         playerMarker.AttachNode(playerLayer);
-        _ = LoadPlayerMarkerIconAsync(playerMarker);
-    }
-
-    private async Task LoadPlayerMarkerIconAsync(ImGuiImageNode node)
-    {
-        IDalamudTextureWrap texture;
-        try
-        {
-            texture = await Services.TextureProvider.GetFromGameIcon(MapPlayerIconId).RentAsync();
-        }
-        catch (Exception ex)
-        {
-            Services.Log.Warning(ex, "[FishingClues] Area map: failed to load the player marker icon.");
-            return;
-        }
-        await Services.Framework.Run(() =>
-        {
-            if (!ReferenceEquals(node, playerMarker))
-            {
-                texture.Dispose();
-                return;
-            }
-            node.LoadTexture(texture);
-            node.Alpha = 1.0f;
-        });
+        _ = LoadGameIconAsync(playerMarker, MapPlayerIconId, () => ReferenceEquals(marker, playerMarker));
     }
 
     private async Task LoadPlayerConeAsync(ImGuiImageNode node)
     {
-        IDalamudTextureWrap texture;
-        try
-        {
-            var pixels = await Task.Run(() =>
-            {
-                var sheet = Services.DataManager.GetFile<TexFile>(MapConeSheetPath);
-                if (sheet is null) return null;
-                int width = sheet.Header.Width;
-                byte[] source = sheet.ImageData;
-                var crop = new byte[MapConeSheetSize * MapConeSheetSize * 4];
-                for (int y = 0; y < MapConeSheetSize; y++)
-                {
-                    for (int x = 0; x < MapConeSheetSize; x++)
-                    {
-                        int from = (y * width + MapConeSheetX + x) * 4;
-                        int to = (y * MapConeSheetSize + x) * 4;
-                        // Lumina's image data is BGRA, the texture RGBA.
-                        crop[to + 0] = source[from + 2];
-                        crop[to + 1] = source[from + 1];
-                        crop[to + 2] = source[from + 0];
-                        crop[to + 3] = source[from + 3];
-                    }
-                }
-                return crop;
-            });
-            if (pixels is null) return;
-            texture = await Services.TextureProvider.CreateFromRawAsync(
-                RawImageSpecification.Rgba32(MapConeSheetSize, MapConeSheetSize), pixels, "FishingCluesMapPlayerCone");
-        }
-        catch (Exception ex)
-        {
-            Services.Log.Warning(ex, "[FishingClues] Area map: failed to load the camera cone sprite.");
-            return;
-        }
-        await Services.Framework.Run(() =>
-        {
-            if (!ReferenceEquals(node, playerCone))
-            {
-                texture.Dispose();
-                return;
-            }
-            node.LoadTexture(texture);
-            node.TextureSize = new Vector2(MapConeSheetSize, MapConeSheetSize);
-            node.Alpha = 1.0f;
-        });
+        byte[]? pixels = await Task.Run(() => ReadRgbaSquare(MapConeSheetPath, MapConeSheetX, 0, MapConeSheetSize));
+        if (pixels is not null)
+            await ShowRgbaAsync(node, pixels, MapConeSheetSize, "FishingCluesMapPlayerCone", () => ReferenceEquals(node, playerCone));
     }
-
-    // Shown only while the player is in the zone whose map is displayed.
     private unsafe void UpdatePlayerMarker()
     {
         if (playerMarker is null || playerCone is null || mapClip is null) return;
@@ -170,9 +94,7 @@ public sealed partial class NativeJournalWindow
         if (active is not null) playerCone.Rotation = MapRotationSign * -active->DirH - MapPlayerConeBaseAngle;
     }
 
-    // The zone map's scale and offsets, for converting a world position to map
-    // pixels: (world + offset) * scale + 1024. Cached for the last zone asked
-    // about; null when the zone has no usable map.
+    // map scale/offsets for world -> pixel: (world + offset) * scale + 1024, cached per zone
     private (float Scale, float OffsetX, float OffsetY)? ResolvePlayerMapInfo(uint territory)
     {
         if (playerMapTerritory != territory)

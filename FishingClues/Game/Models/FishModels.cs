@@ -65,7 +65,6 @@ public sealed class FishCondition
     public string? Tug { get; set; }
     public string? Gig { get; set; }
     public string? SpearSpeed { get; set; }
-    public object? DataMissing { get; set; }
 }
 
 public sealed record HiddenFish(uint FishParameterId, uint ItemId, byte Level, string? KnownName);

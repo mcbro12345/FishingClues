@@ -33,7 +33,6 @@ public sealed class Configuration : IPluginConfiguration
     public bool DisableAvailabilityCountdown { get; set; }
     public bool Use12HourTime { get; set; } = true;
     public bool ShowAreaLocationMap { get; set; } = true;
-    // Whether the map panel was left open, so it comes back as it was.
     public bool MapPanelOpen { get; set; } = true;
 
     // Fish data
@@ -60,8 +59,7 @@ public sealed class Configuration : IPluginConfiguration
         _ => true,
     };
 
-    // Brings a configuration saved by an older version up to date: layout
-    // defaults that changed since it was saved are reset to the new ones.
+    // migrates a config saved by an older version, resets layout defaults that changed
     public void Migrate()
     {
         RevealedFish ??= new();

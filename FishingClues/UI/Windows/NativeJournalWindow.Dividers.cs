@@ -8,7 +8,7 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues.UI.Windows;
 
-// The draggable dividers between the columns and the details panel.
+// draggable dividers
 public sealed partial class NativeJournalWindow
 {
     private CollisionNode CreateColumnHandle(int kind)
@@ -23,9 +23,7 @@ public sealed partial class NativeJournalWindow
         return handle;
     }
 
-    // A handle with a mouse-down event has collision, which blocks clicks to whatever
-    // is behind it. That is not tied to visibility, so a locked (invisible) handle
-    // would still swallow clicks; this turns collision off along with visibility.
+    // a handle with a mouse-down event has collision that blocks clicks behind it, even when invisible, so turn it off with visibility
     private static void SetDividerHandleInteractive(CollisionNode handle, bool interactive)
     {
         handle.IsVisible = interactive;
@@ -113,11 +111,7 @@ public sealed partial class NativeJournalWindow
                 configuration.NativeAreaWidth = areaWidthSetting = Math.Clamp(dragStartWidth + delta, 240, maximum);
             }
         }
-        float detailsScroll = detailsList?.ScrollBarNode.ScrollPosition ?? 0;
-        float fishScroll = fishList?.ScrollBarNode.ScrollPosition ?? 0;
-        LayoutAttachedNodes();
-        if (detailsList is not null) RestoreScroll(detailsList, detailsScroll);
-        if (fishList is not null) RestoreScroll(fishList, fishScroll);
+        KeepingScroll(LayoutAttachedNodes, detailsList, fishList);
         // Have the game pick up the resized clip and collision areas now, not a frame later.
         addon->UpdateCollisionNodeList(false);
     }

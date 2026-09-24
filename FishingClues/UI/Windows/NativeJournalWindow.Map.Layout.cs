@@ -2,7 +2,6 @@ using System.Numerics;
 
 namespace FishingClues.UI.Windows;
 
-// Positions the map panel: the toggle button, caption, map and border.
 public sealed partial class NativeJournalWindow
 {
     private const float MapDividerOffsetX = -2.0f;
@@ -10,7 +9,6 @@ public sealed partial class NativeJournalWindow
     private const float MapTitleOffsetX = 2.0f;
     private const float MapTitleOffsetY = -9.0f;
     private const float MapBorderThickness = 6.0f;
-    // How far the border sits outside the map's edge.
     private const float MapBorderInset = 3.0f;
 
     private void LayoutMapPanel()
@@ -35,8 +33,6 @@ public sealed partial class NativeJournalWindow
         var (regionWidth, areaWidth) = ColumnWidths();
         float areaX = regionWidth + ColumnGap;
 
-        // The map sits at the bottom of the content area, directly below the
-        // area list, which is sized to leave exactly this much room (see ReservedMapHeight).
         float mapWidth = EffectiveMapWidth(areaWidth);
         float mapHeight = EffectiveMapHeight();
         float captionTop = ContentSize.Y - MapCaptionHeight - mapHeight;
@@ -45,10 +41,7 @@ public sealed partial class NativeJournalWindow
             mapCaptionDivider.Position = contentOrigin + new Vector2(areaX + MapDividerOffsetX, captionTop - MapDividerHeight + MapDividerOffsetY);
             mapCaptionDivider.Width = areaWidth;
         }
-        // Kept up to date even while the map (and this caption) is hidden: a newly created
-        // node is visible until something positions and hides it, so if a frame ever renders
-        // before that happens, it should be in its normal spot above the map rather than
-        // wherever it defaulted to (the window's top-left corner).
+        // keep positions current while hidden so a frame that renders early isn't at the top-left
         Vector2 titleOffset = new(MapTitleOffsetX, MapTitleOffsetY);
         if (mapAreaName is not null)
         {
@@ -85,7 +78,6 @@ public sealed partial class NativeJournalWindow
         ApplyMapPan();
     }
 
-    // The four border lines run around the map with their corners overlapping.
     private void LayoutMapBorder(Vector2 clipPosition, Vector2 clipSize)
     {
         const float thickness = MapBorderThickness;

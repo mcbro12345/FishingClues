@@ -4,9 +4,7 @@ using Dalamud.Plugin.Services;
 
 namespace FishingClues.Base;
 
-// Populated by PluginInterface.Create<Services>() from Plugin's constructor.
-// Every other class reaches Dalamud's services through here instead of taking
-// each one as a constructor parameter.
+// filled by PluginInterface.Create<Services>() in Plugin's constructor
 internal sealed class Services
 {
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; set; } = null!;

@@ -30,7 +30,6 @@ public abstract unsafe class NodeBase<T> : NodeBase where T : unmanaged, ICreata
     protected NodeBase(NodeType nodeType) {
         ThreadSafety.AssertMainThread();
 
-        IPluginLog.Get().Verbose($"Creating new node {GetType()}");
         Node = IMemorySpace.GetUISpace()->Create<T>();
 
         if (ResNode is null) {

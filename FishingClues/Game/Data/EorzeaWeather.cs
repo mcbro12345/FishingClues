@@ -2,18 +2,14 @@ using System;
 
 namespace FishingClues.Game.Data;
 
-/// <summary>
-/// Reproduces the game's real-time-to-Eorzea-time conversion and the weather
-/// forecast algorithm used to determine a zone's weather at a given moment.
-/// Computed entirely locally; no external data source is required.
-/// </summary>
+// real time -> Eorzea time and the weather forecast, all computed locally
 public static class EorzeaWeather
 {
     public const long SecondsPerEorzeaHour = 175;
     public const long SecondsPerEorzeaDay = SecondsPerEorzeaHour * 24;
     public const long SecondsPerWeatherWindow = SecondsPerEorzeaHour * 8;
 
-    /// <summary>The 0-99 target value used to pick a weather from a zone's cumulative rate table.</summary>
+    // 0-99 target used to pick a weather from a zone's rate table
     public static byte CalculateTarget(long unixSeconds)
     {
         long hour = unixSeconds / SecondsPerEorzeaHour;
@@ -25,7 +21,7 @@ public static class EorzeaWeather
         return (byte)(calc % 100);
     }
 
-    /// <summary>The real-time (unix seconds) start of the 1400-second weather window containing the given time.</summary>
+    // real start (unix seconds) of the 1400s weather window containing the time
     public static long WindowStart(long unixSeconds)
     {
         long remainder = unixSeconds % SecondsPerWeatherWindow;
@@ -33,7 +29,7 @@ public static class EorzeaWeather
         return unixSeconds - remainder;
     }
 
-    /// <summary>The current Eorzea hour-of-day (0-24, exclusive) at the given real time.</summary>
+    // Eorzea hour of day (0-24) at the given real time
     public static double EorzeaHourOfDay(long unixSeconds)
     {
         long remainder = unixSeconds % SecondsPerEorzeaDay;

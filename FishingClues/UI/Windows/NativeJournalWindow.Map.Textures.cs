@@ -29,13 +29,10 @@ public sealed partial class NativeJournalWindow
         (85, 64, 38), (151, 118, 69), (196, 160, 105), (222, 188, 132), (151, 118, 69), (85, 64, 38),
     };
 
-    // Built map textures, kept across window openings so the map appears at once
-    // when the journal reopens. Each window gets its own wrap sharing the cached
-    // one's GPU resource, since a node disposes the wrap it is given.
+    // built textures are cached across openings, each window gets its own wrap since nodes dispose theirs
     private static readonly Dictionary<string, Task<IDalamudTextureWrap?>> MapTextureCache = new();
     private static readonly List<string> MapTextureCacheOrder = new();
 
-    // The Eorzea overview, used before any hole has been picked.
     private static string? WorldMapTexturePath()
         => Services.DataManager.GetExcelSheet<MapSheet>().TryGetRow(WorldMapRowId, out MapSheet map) ? MapTextures.PathFor(map) : null;
 
@@ -64,7 +61,7 @@ public sealed partial class NativeJournalWindow
 
         await Services.Framework.Run(() =>
         {
-            // The player may have moved on while this was loading.
+            // player may have moved on
             if (mapImage is null || mapLoadedTexturePath != texturePath)
             {
                 texture.Dispose();
@@ -73,12 +70,11 @@ public sealed partial class NativeJournalWindow
             mapImage.LoadTexture(texture);
             mapImage.TextureSize = new Vector2(2048.0f, 2048.0f);
             mapImage.Alpha = 1.0f;
-            // The dark backdrop appears together with the map so it never shows alone.
             if (mapBackdrop is not null) mapBackdrop.Alpha = 1.0f;
         });
     }
 
-    // Starts building the current zone's map in the background so it is ready when the journal opens.
+    // start building the current zone's map early
     public static void PrewarmMapCache(uint territoryId)
     {
         if (territoryId == 0) return;
@@ -89,6 +85,8 @@ public sealed partial class NativeJournalWindow
 
     public static void ClearMapTextureCache()
     {
+        areaCircleTexture?.Dispose();
+        areaCircleTexture = null;
         lock (MapTextureCache)
         {
             foreach (var task in MapTextureCache.Values) DisposeWhenBuilt(task);
@@ -132,10 +130,7 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // The game draws a map as two textures multiplied together: "<id>_m.tex" is
-    // the terrain and "<id>m_m.tex" the parchment (paper, border, zone banner).
-    // Returns null, so the caller falls back to the terrain alone, when there is
-    // no parchment layer or it differs in size.
+    // the game multiplies two textures: <id>_m.tex (terrain) and <id>m_m.tex (parchment). null if there's no parchment or the size differs
     private static async Task<IDalamudTextureWrap?> CreateMapCompositeAsync(string texturePath)
     {
         const string suffix = "_m.tex";
@@ -152,7 +147,7 @@ public sealed partial class NativeJournalWindow
             if (paper.Header.Width != width || paper.Header.Height != height) return null;
             byte[] top = map.ImageData, bottom = paper.ImageData;
             var pixels = new byte[width * height * 4];
-            // Lumina's image data is BGRA, the output RGBA.
+            // BGRA -> RGBA
             for (int i = 0; i < pixels.Length; i += 4)
             {
                 pixels[i + 0] = (byte)(top[i + 2] * bottom[i + 2] / 255);
@@ -166,59 +161,49 @@ public sealed partial class NativeJournalWindow
         return await Services.TextureProvider.CreateFromRawAsync(RawImageSpecification.Rgba32(w, h), data, "FishingCluesMapComposite");
     }
 
-    // One side of the map border: MapBorderPatternSize pixels thick, coloured
-    // from BronzeBorderRamp across its thickness (outer edge first, or last for
-    // the bottom and right sides) and constant along its length.
-    private static IDalamudTextureWrap CreateBronzeBorderTexture(bool vertical, bool outerFirst)
+    private static IDalamudTextureWrap CreateSquareTexture(int size, string name, Func<int, int, (byte R, byte G, byte B, byte A)> pixel)
     {
-        const int size = MapBorderPatternSize;
         var pixels = new byte[size * size * 4];
         for (int y = 0; y < size; y++)
-        {
             for (int x = 0; x < size; x++)
             {
-                int across = vertical ? x : y;
-                var (r, g, b) = BronzeBorderRamp[outerFirst ? across : size - 1 - across];
+                var (r, g, b, a) = pixel(x, y);
                 int i = (y * size + x) * 4;
                 pixels[i + 0] = r;
                 pixels[i + 1] = g;
                 pixels[i + 2] = b;
-                pixels[i + 3] = 255;
+                pixels[i + 3] = a;
             }
-        }
-        return Services.TextureProvider.CreateFromRaw(RawImageSpecification.Rgba32(size, size), pixels, "FishingCluesMapBorder");
+        return Services.TextureProvider.CreateFromRaw(RawImageSpecification.Rgba32(size, size), pixels, name);
     }
 
-    // Black at 60% opacity behind the map.
+    // one side of the border, coloured from BronzeBorderRamp across its thickness
+    private static IDalamudTextureWrap CreateBronzeBorderTexture(bool vertical, bool outerFirst)
+        => CreateSquareTexture(MapBorderPatternSize, "FishingCluesMapBorder", (x, y) =>
+        {
+            int across = vertical ? x : y;
+            var (r, g, b) = BronzeBorderRamp[outerFirst ? across : MapBorderPatternSize - 1 - across];
+            return (r, g, b, 255);
+        });
+
     private static IDalamudTextureWrap CreateBackdropTexture()
-    {
-        var pixels = new byte[MapBackdropTextureSize * MapBackdropTextureSize * 4];
-        for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 153;
-        return Services.TextureProvider.CreateFromRaw(
-            RawImageSpecification.Rgba32(MapBackdropTextureSize, MapBackdropTextureSize), pixels, "FishingCluesMapBackdrop");
-    }
+        => CreateSquareTexture(MapBackdropTextureSize, "FishingCluesMapBackdrop", (_, _) => (0, 0, 0, 153));
 
-    // A flat translucent teal disc, the range circle behind a hole's marker.
+    // built once, each marker gets a wrap sharing its GPU texture
+    private static IDalamudTextureWrap? areaCircleTexture;
+
+    private static IDalamudTextureWrap SharedAreaCircleTexture()
+        => (areaCircleTexture ??= CreateAreaCircleTexture()).CreateWrapSharingLowLevelResource();
+
+    // range circle behind a marker
     private static IDalamudTextureWrap CreateAreaCircleTexture()
     {
-        const int size = MapAreaCircleTextureSize;
-        const float center = size / 2.0f;
-        const float radius = size / 2.0f - 2.0f;
-
-        var pixels = new byte[size * size * 4];
-        for (int y = 0; y < size; y++)
+        const float center = MapAreaCircleTextureSize / 2.0f;
+        const float radius = center - 2.0f;
+        return CreateSquareTexture(MapAreaCircleTextureSize, "FishingCluesMapAreaCircle", (x, y) =>
         {
-            for (int x = 0; x < size; x++)
-            {
-                int i = (y * size + x) * 4;
-                float dx = x + 0.5f - center;
-                float dy = y + 0.5f - center;
-                pixels[i + 0] = 130;
-                pixels[i + 1] = 220;
-                pixels[i + 2] = 215;
-                pixels[i + 3] = MathF.Sqrt(dx * dx + dy * dy) <= radius ? (byte)70 : (byte)0;
-            }
-        }
-        return Services.TextureProvider.CreateFromRaw(RawImageSpecification.Rgba32(size, size), pixels, "FishingCluesMapAreaCircle");
+            float dx = x + 0.5f - center, dy = y + 0.5f - center;
+            return (130, 220, 215, MathF.Sqrt(dx * dx + dy * dy) <= radius ? (byte)70 : (byte)0);
+        });
     }
 }

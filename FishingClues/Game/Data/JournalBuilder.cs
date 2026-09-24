@@ -17,8 +17,7 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.Game.Data;
 
-// Builds the region / area / fishing hole tree the journal and guide draw from,
-// and tracks which fish and regions the player has seen revealed.
+// builds the region/area/hole tree and tracks what the player has seen revealed
 public sealed class JournalBuilder
 {
     private const long JournalCacheMs = 2000;
@@ -39,16 +38,11 @@ public sealed class JournalBuilder
     private long lastJournalBuild;
     private ulong journalCharacterId;
     private long nextFishRevealScan;
-    // The holes that were unlocked at the last build, so one that flips to
-    // unlocked can be reported once as "just discovered". Null until the first
-    // build, which only seeds it.
+    // holes unlocked at the last build, null until the first one
     private HashSet<uint>? knownUnlockedSpots;
 
-    // A hole seen becoming unlocked since the journal window was last opened.
     public uint? PendingDiscoveredSpotId { get; private set; }
 
-    // Raised when the logged-in character changes, so other services can drop
-    // their per-character state.
     public event Action? CharacterChanged;
 
     public JournalBuilder(FishDataService fishData, Configuration configuration)
@@ -63,6 +57,18 @@ public sealed class JournalBuilder
         uint? id = PendingDiscoveredSpotId;
         PendingDiscoveredSpotId = null;
         return id;
+    }
+
+    public JournalSpot? FindSpot(uint id) => (journalCache ?? GetJournal()).AllSpots().FirstOrDefault(s => s.Id == id);
+
+    // loads the sheets a journal build reads, so the first open doesn't pay for that
+    public static void WarmSheets()
+    {
+        var items = Services.DataManager.GetExcelSheet<ItemSheet>();
+        foreach (FishingSpotSheet spot in Services.DataManager.GetExcelSheet<FishingSpotSheet>())
+            foreach (var fish in spot.Item)
+                if (fish.RowId != 0 && items.TryGetRow(fish.RowId, out var item)) _ = item.Name;
+        foreach (FishParameterSheet _ in Services.DataManager.GetExcelSheet<FishParameterSheet>()) { }
     }
 
     public void InvalidateCache()
@@ -131,8 +137,7 @@ public sealed class JournalBuilder
         bool isUnlocked = configuration.DebugRevealEverything || IsFishingHoleDiscovered(player, spot.RowId);
         ushort regionPlaceNameId = (ushort)(spot.PlaceNameMain.RowId != 0
             ? spot.PlaceNameMain.RowId : territoryRow?.PlaceNameRegion.RowId ?? 0);
-        // FishingSpot.X and Z are already pixel positions on the 2048x2048 map
-        // texture (1024,1024 is the centre), so no world-to-map conversion applies.
+        // spot X/Z are already 2048 map pixels
         var map = territoryRow?.Map.ValueNullable;
         bool hasMap = map is { RowId: not 0 };
         Vector2? mapPixel = hasMap ? new Vector2(spot.X, spot.Z) : null;
@@ -142,8 +147,7 @@ public sealed class JournalBuilder
             new Vector2(spot.X, spot.Z), spot.Radius);
     }
 
-    // The sheet's region and area names are often blank, so fall back through the
-    // territory, the fish data's own zone info, and finally a name match.
+    // sheet names are often blank, fall back to the territory then the fish data
     private (string Region, string Area) ResolveRegionAndArea(FishingSpotSheet spot, TerritoryTypeSheet? territoryRow, List<JournalFish> entries)
     {
         string territory = territoryRow?.PlaceName.ValueNullable?.Name.ToString() ?? "Other";
@@ -189,9 +193,7 @@ public sealed class JournalBuilder
         CharacterChanged?.Invoke();
     }
 
-    // Compares this build's unlocked holes with the last build's. The first build
-    // only seeds the baseline; after that a hole becoming unlocked is the pending
-    // discovery (the latest one, if several changed at once).
+    // first build only seeds the baseline, after that a newly unlocked hole is the pending discovery
     private void UpdateDiscoveryTracking(List<JournalSpot> spots)
     {
         var currentUnlocked = new HashSet<uint>(spots.Where(s => s.IsUnlocked).Select(s => s.Id));
@@ -204,8 +206,7 @@ public sealed class JournalBuilder
         knownUnlockedSpots = currentUnlocked;
     }
 
-    // Watches the vanilla Fishing Log while it is open, to learn which region
-    // names and fish it has revealed to the player.
+    // watches the vanilla log to learn which regions and fish it revealed
     public unsafe void ObserveVanillaRegionLabels()
     {
         ResetJournalCharacter();
@@ -252,9 +253,7 @@ public sealed class JournalBuilder
         }
     }
 
-    // Where the player is now, for opening the journal at their location: the
-    // region and area of the current zone, and the nearest unlocked hole in it
-    // (null if the zone has none). All null if the zone isn't in the journal.
+    // current region/area/nearest unlocked hole, all null if the zone isn't in the journal
     public static (JournalRegion? Region, JournalArea? Area, JournalSpot? Spot) LocateCurrentLocation(IReadOnlyList<JournalRegion> regions)
     {
         uint territory = Services.ClientState.TerritoryType;

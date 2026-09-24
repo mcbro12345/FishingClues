@@ -4,7 +4,6 @@ namespace FishingClues.Game.Data;
 
 public static class FishingDiscovery
 {
-    // Region place names the vanilla Fishing Log hides until they are discovered.
     public static readonly ushort[] HiddenRegionPlaceNameIds = [3704, 3705, 4502];
 
     // Having an ID in the agent's array isn't proof of discovery, since locked entries have IDs too.

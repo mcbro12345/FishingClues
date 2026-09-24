@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Command;
 using Dalamud.Plugin;
@@ -48,6 +49,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             HelpMessage = "Open the Fishing Clues journal.\n/fishingclues settings → Open settings.",
         });
         Services.Framework.Update += OnFrameworkUpdate;
+        new Thread(Prewarm.Run) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "FishingClues prewarm" }.Start();
         Services.PluginInterface.UiBuilder.Draw += OnDraw;
         Services.PluginInterface.UiBuilder.OpenMainUi += windowManager.OpenJournal;
         Services.PluginInterface.UiBuilder.OpenConfigUi += windowManager.OpenSettings;

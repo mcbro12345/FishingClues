@@ -14,9 +14,8 @@ public sealed class FishEntryRowNode : ListButtonNode
 {
     private const float CompactHeight = 42.0f;
     private const uint BadgeFontSize = 12;
-    // One line of badge text.
     private const float BadgeLineHeight = 14.0f;
-    // Space above and below a row's content: a plain row hugs its icon, a row with a badge gets more so its glow encloses the text.
+    // padding above/below the content, bigger with a badge so the glow encloses the text
     private const float PlainPadding = 2.0f;
     private const float BadgePadding = 5.0f;
 
@@ -30,7 +29,6 @@ public sealed class FishEntryRowNode : ListButtonNode
     private bool favoriteHovered;
     private Action clickAction;
 
-    // The fish this row currently shows.
     public JournalFish Fish { get; private set; }
     private Func<bool>? toggleFavorite;
     private bool favoriteSaved;
@@ -45,9 +43,7 @@ public sealed class FishEntryRowNode : ListButtonNode
         OnClick = () => { if (!favoriteHovered) clickAction(); };
 
         LabelNode.TextFlags = TextFlags.None;
-        // The hover and selected highlights are soft at their top and bottom edges. Stretched
-        // over a tall (multi-line) row those soft bands grew with it and left the text in
-        // the faded part, so the bands are pinned at 6px and only the solid middle stretches.
+        // soft highlight edges grew with tall rows and faded the text, so pin them at 6px and stretch the middle
         HoverBackgroundNode.TopOffset = HoverBackgroundNode.BottomOffset = 6.0f;
         SelectedBackgroundNode.TopOffset = SelectedBackgroundNode.BottomOffset = 6.0f;
         fishIcon = new IconImageNode
@@ -70,7 +66,6 @@ public sealed class FishEntryRowNode : ListButtonNode
         unknownIcon.AttachNode(this, NodePosition.AfterAllSiblings);
     }
 
-    // Points the row at another fish, so a list can be refilled without rebuilding its rows.
     public void Rebind(JournalFish fish, string label, Action onClick)
     {
         String = label;
@@ -81,7 +76,6 @@ public sealed class FishEntryRowNode : ListButtonNode
         unknownIcon.IsVisible = !fish.IdentityVisible;
     }
 
-    // Adds the favorite star, or updates it if the row already has one.
     public unsafe void SetFavoriteStar(bool favorite, Func<bool> toggle)
     {
         toggleFavorite = toggle;
@@ -131,7 +125,7 @@ public sealed class FishEntryRowNode : ListButtonNode
     {
         if (availabilityBadge is null)
         {
-            // default LineSpacing (24) is tuned for 14pt text, too tall for our small badge
+            // default LineSpacing (24) is too tall for the small badge
             availabilityBadge = new LabelTextNode { FontSize = BadgeFontSize, LineSpacing = 14 };
             availabilityBadge.AttachNode(this, NodePosition.AfterAllSiblings);
         }
@@ -142,8 +136,7 @@ public sealed class FishEntryRowNode : ListButtonNode
         OnSizeChanged();
     }
 
-    // Greedy word wrap measured with the badge's own font, keeping a time range
-    // ("7:00pm-9:00pm ET window.") together on one line.
+    // greedy wrap in the badge font, keeps a time range on one line
     private string WrapBadgeText(string text, float width, out int lineCount)
     {
         const char Glue = '\u001F';
@@ -166,7 +159,7 @@ public sealed class FishEntryRowNode : ListButtonNode
         return string.Join("\n", lines);
     }
 
-    // The time range alone ("7:00pm-9:00pm ET." or "21:00-03:00 ET"), so a lead-in word stays on the line before.
+    // just the time range, so the lead-in word stays on the previous line
     private static readonly Regex TimePhrase = new(
         @"\d{1,2}:\d{2}(?:am|pm)?-\d{1,2}:\d{2}(?:am|pm)? ET(?: window)?\.?", RegexOptions.Compiled);
 
@@ -179,9 +172,7 @@ public sealed class FishEntryRowNode : ListButtonNode
 
         float rightReserve = favoriteButton is null ? 56 : 90;
 
-        // The badge always sits on its own line under the name. Line breaks are
-        // inserted by hand: the native word wrap can split a time range, and its
-        // reported height lags a frame, which left the row one line too short.
+        // badge is always on its own line, broken by hand: native wrap can split a time range and its height lags a frame
         int badgeLines = 1;
         if (availabilityBadge is not null)
         {

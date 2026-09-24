@@ -4,9 +4,7 @@ namespace FishingClues.Game.Data;
 
 public static class MapTextures
 {
-    // The game path of a map's terrain texture: "ui/map/s1t2/01/s1t201_m.tex" for
-    // the Map row whose Id is "s1t2/01". Always the base name; the game picks the
-    // high-resolution variant itself. Null when the row has no usable Id.
+    // game path of a map's base terrain texture (Id s1t2/01 -> ui/map/s1t2/01/s1t201_m.tex), null if the row has no Id
     public static string? PathFor(MapSheet map)
     {
         string id = map.Id.ToString();

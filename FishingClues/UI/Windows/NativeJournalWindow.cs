@@ -26,10 +26,8 @@ public sealed partial class NativeJournalWindow(
     private const float FishSummaryHeight = 54.0f;
     private const float SearchDividerY = 33.0f;
     private const float SearchButtonWidth = 90.0f;
-    // The details panel's height while no fish is selected: just room for its hint text.
     private const float CollapsedDetailsHeight = 22.0f;
     private const float ColumnGap = 10.0f;
-    // Warm gold for the region list.
     private static readonly Vector4 RegionListTextColor = new(0.80f, 0.66f, 0.40f, 1.0f);
     private ScrollingNode<JournalListNode>? regionList;
     private ScrollingNode<JournalListNode>? areaList;
@@ -38,7 +36,6 @@ public sealed partial class NativeJournalWindow(
     private HorizontalLineNode? detailsDivider;
     private HorizontalLineNode? detailsBottomDivider;
     private float previousFishHeight = float.NaN, previousDetailsHeight = float.NaN;
-    // Whether the last layout had the details panel open (a fish selected).
     private bool detailsLaidOutOpen;
     private bool layingOut;
     private CollisionNode? dividerHandle;
@@ -56,7 +53,6 @@ public sealed partial class NativeJournalWindow(
     private long nextAvailabilityRefresh;
     private readonly Dictionary<ListButtonNode, JournalRegion> regionButtons = new();
     private readonly Dictionary<ListButtonNode, uint> spotButtons = new();
-    // Rebuilt by SelectRegion; lets a hole in another area open that area's dropdown.
     private readonly Dictionary<JournalArea, AnimatedAreaHeaderNode> areaHeaderByArea = new();
     private LabelTextNode? detailsHint;
     private CategoryTextNode? regionHeader;
@@ -118,7 +114,7 @@ public sealed partial class NativeJournalWindow(
         regionList!.AttachNode(this);
         areaList!.AttachNode(this);
         fishList!.AttachNode(this);
-        // The horizontal dividers go on last so no list or panel is drawn over them.
+        // horizontal dividers last so nothing draws over them
         summaryDivider.AttachNode(this);
         areaHeaderDivider!.AttachNode(this);
         detailsDivider!.AttachNode(this);
@@ -135,14 +131,13 @@ public sealed partial class NativeJournalWindow(
             InitializeJournalButton();
             RestoreSelectedFish();
         }
-        RestoreScroll(regionList!, sessionState.RegionScroll);
-        RestoreScroll(areaList!, sessionState.AreaScroll);
-        RestoreFishScroll(sessionState.FishScroll);
-        RestoreDetailsScroll(sessionState.DetailsScroll);
+        RestoreScroll(regionList, sessionState.RegionScroll);
+        RestoreScroll(areaList, sessionState.AreaScroll);
+        RestoreScroll(fishList, sessionState.FishScroll);
+        RestoreScroll(detailsList, sessionState.DetailsScroll);
     }
 
-    // The round cog left of the close button, which opens the plugin settings. It
-    // is the command panel's own settings button (CircleButtons.tex, plate and cog in one sprite).
+    // cog left of the close button, opens the plugin settings
     private void CreateSettingsButton()
     {
         if (options.OpenSettings is null) return;
@@ -159,8 +154,7 @@ public sealed partial class NativeJournalWindow(
         PositionSettingsButton();
     }
 
-    // The headings use the game's serif small-caps font (Jupiter), which draws
-    // mixed-case text as small capitals.
+    // Jupiter (serif small caps) draws mixed case as small capitals
     private void CreateHeaders(float regionWidth, float areaWidth, float fishX)
     {
         regionHeader = AddHeader("Region", 0, regionWidth, FontType.Jupiter, 16);
@@ -183,8 +177,6 @@ public sealed partial class NativeJournalWindow(
         detailsList.AttachNode(this);
     }
 
-    // The divider between the fish list and the details panel, its bottom edge,
-    // and the draggable handles for all three dividers.
     private void CreateDividerHandles()
     {
         detailsDivider = new HorizontalLineNode { Height = 2.0f };
@@ -211,15 +203,13 @@ public sealed partial class NativeJournalWindow(
         regionList!.RecalculateSizes();
     }
 
-    // Opens at a newly discovered hole if there is one, else at the player's
-    // location the first time the journal opens this session, else where it was left.
+    // newly discovered hole, else the player's location on first open, else where it was left
     private void OpenInitialRegion()
     {
         JournalRegion? forceRegion = null;
         JournalArea? forceArea = null;
         JournalSpot? forceSpot = null;
-        // Only for the newly-discovered-hole case: zoom the map to it, the same as
-        // clicking it in the area list does, rather than just opening its area.
+        // only for a newly discovered hole: zoom to it like a click would
         bool zoomToForcedSpot = false;
 
         if (options.PendingDiscoveredSpotId is uint discoveredId)
@@ -288,8 +278,7 @@ public sealed partial class NativeJournalWindow(
         searchPending = true;
     }
 
-    // Reopens the fish that was selected when the journal was last closed. (The
-    // guide restores its selection after its search results are built.)
+    // reopens the fish selected last time (the guide does it after its search)
     private void RestoreSelectedFish()
     {
         var restoredFish = selectedSpot?.Fish.FirstOrDefault(f => f.FishParameterId == sessionState.SelectedFish);
@@ -305,18 +294,9 @@ public sealed partial class NativeJournalWindow(
         RenderDetails();
     }
 
-    private void RestoreFishScroll(float position)
+    private static void RestoreScroll(ScrollingNode<JournalListNode>? list, float position)
     {
-        if (fishList is not null) RestoreScroll(fishList, position);
-    }
-
-    private void RestoreDetailsScroll(float position)
-    {
-        if (detailsList is not null) RestoreScroll(detailsList, position);
-    }
-
-    private static void RestoreScroll(ScrollingNode<JournalListNode> list, float position)
-    {
+        if (list is null) return;
         list.RecalculateSizes();
         list.ScrollBarNode.ScrollPosition = float.IsFinite(position)
             ? Math.Clamp(position, 0, Math.Max(0, list.ScrollBarNode.ScrollMaxPosition)) : 0;

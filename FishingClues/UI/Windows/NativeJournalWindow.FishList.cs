@@ -12,7 +12,6 @@ namespace FishingClues.UI.Windows;
 
 public sealed partial class NativeJournalWindow
 {
-    // The generic UI click sound.
     private const uint UiClickSoundEffectId = 1;
 
     public void SubmitSearch(string query, uint itemId = 0)
@@ -49,24 +48,22 @@ public sealed partial class NativeJournalWindow
         if (requestedSearchItem != 0) {
             var match = matches.FirstOrDefault(f => f.ItemId == requestedSearchItem);
             requestedSearchItem = 0;
-            if (match is not null) {
-                var row = fishButtons.FirstOrDefault(p => p.Value == match.FishParameterId).Key;
-                if (row is not null) ToggleFishSelection(row.Fish);
-                if (row is not null) RestoreFishScroll(Math.Max(0, row.Y));
-            }
+            if (match is not null) SelectFishRow(match.FishParameterId);
         }
-        else if (sessionState.SelectedFish != 0) {
-            var row = fishButtons.FirstOrDefault(p => p.Value == sessionState.SelectedFish).Key;
-            if (row is not null) ToggleFishSelection(row.Fish);
-            if (row is not null) RestoreFishScroll(Math.Max(0, row.Y));
-        }
+        else if (sessionState.SelectedFish != 0) SelectFishRow(sessionState.SelectedFish);
     }
 
-    // The number each undiscovered fish carries in the list ("???? #2"), for its details heading.
+    private void SelectFishRow(uint fishParameterId)
+    {
+        var row = fishButtons.FirstOrDefault(p => p.Value == fishParameterId).Key;
+        if (row is null) return;
+        ToggleFishSelection(row.Fish);
+        RestoreScroll(fishList, Math.Max(0, row.Y));
+    }
+
     private readonly Dictionary<uint, int> unknownFishNumbers = new();
 
-    // Forgets the rows' bookkeeping without touching the nodes on screen. A row removed
-    // while hovered never sends its mouse-out, so its tooltip is closed here.
+    // closes a hovered row's tooltip, it never sends mouse-out when removed
     private void ResetFishListState()
     {
         unknownFishNumbers.Clear();
@@ -75,13 +72,6 @@ public sealed partial class NativeJournalWindow
         availabilityRows.Clear();
     }
 
-    private void ClearFishList()
-    {
-        ResetFishListState();
-        fishList?.ContentNode.Clear();
-    }
-
-    // force rebuilds the fish list even when the hole is already selected.
     private void SelectSpot(JournalSpot spot, bool zoomToSpot = false, bool force = false)
     {
         if (!force && selectedSpot?.Id == spot.Id && fishList is not null)
@@ -121,9 +111,7 @@ public sealed partial class NativeJournalWindow
         fishList.ScrollToStart();
     }
 
-    // The fish list is described as items and then matched onto the nodes it already has,
-    // so refilling it reuses the rows on screen instead of replacing them. Newly created
-    // nodes draw blank for a frame, which showed up as a flash.
+    // fish list items are matched onto existing nodes so refills reuse the rows (new nodes flash blank)
     private abstract record FishListItem;
     private sealed record FishListDivider : FishListItem;
     private sealed record FishListHeading(string Text) : FishListItem;
@@ -150,7 +138,6 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // Replaces the fish list's contents with whatever addItems describes.
     private void FillFishList(Action addItems)
     {
         if (fishList is null) return;
@@ -163,33 +150,11 @@ public sealed partial class NativeJournalWindow
     private void ApplyFishItems()
     {
         if (fishList is null) return;
-        var content = fishList.ContentNode;
-        var existing = content.Nodes.ToList();
-        for (int i = 0; i < fishItems.Count; i++)
-        {
-            FishListItem item = fishItems[i];
-            // When the shapes stop matching, drop this node and everything after it.
-            if (i < existing.Count && !FishItemMatches(existing[i], item))
-            {
-                for (int j = existing.Count - 1; j >= i; j--) content.RemoveNode(existing[j]);
-                existing.RemoveRange(i, existing.Count - i);
-            }
-            NodeBase node;
-            if (i < existing.Count) node = existing[i];
-            else
-            {
-                node = CreateFishNode(item);
-                content.AddNode(node);
-                existing.Add(node);
-            }
-            UpdateFishNode(node, item);
-        }
-        for (int j = existing.Count - 1; j >= fishItems.Count; j--) content.RemoveNode(existing[j]);
+        ReconcileNodes(fishList.ContentNode, fishItems, FishItemMatches, CreateFishNode, UpdateFishNode);
         fishItems.Clear();
         UpdateFishSelection();
         RefreshFishListLayout();
     }
-
     private static bool FishItemMatches(NodeBase node, FishListItem item) => item switch
     {
         FishListDivider => node is HorizontalLineNode,
@@ -243,7 +208,6 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // Clicking the selected fish again unselects it and closes the details.
     private Action RowClick(JournalFish entry) => () => ToggleFishSelection(entry);
 
     private void ToggleFishSelection(JournalFish entry)

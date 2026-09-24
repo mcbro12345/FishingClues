@@ -12,13 +12,10 @@ using FishingClues.UI.Components;
 
 namespace FishingClues.UI.Windows;
 
-// The per-frame update. Native buttons ignore clicks (and never send a
-// mouse-out) when only part of them is inside their list's clip region, so
-// rows cut off at a list's edge are hit-tested, highlighted and clicked by hand.
+// per-frame update. Native buttons ignore clicks on rows clipped at a list's edge, so those are hit-tested by hand
 public sealed partial class NativeJournalWindow
 {
     private const float AreaHeaderTitleHeight = 28.0f;
-    // Countdowns tick every second.
     private const long AvailabilityRefreshIntervalMs = 1000;
 
     private FishEntryRowNode? partialHover;
@@ -35,7 +32,7 @@ public sealed partial class NativeJournalWindow
         var framework = Framework.Instance();
         var mouse = framework == null ? default : framework->CursorInputs;
         var stage = AtkStage.Instance();
-        bool overAddon = stage != null && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon;
+        bool overAddon = IsOverAddon(addon, stage);
 
         UpdateResizeCursor(addon, mouse, overAddon);
         if (!draggingDivider && overAddon)
@@ -50,9 +47,7 @@ public sealed partial class NativeJournalWindow
         AnimateAreaList();
     }
 
-    // Native hover highlights on rows cut off at the edge of their list stay lit
-    // after the cursor leaves. Clear them every frame; the hit-testing below
-    // lights the one row that is really under the cursor.
+    // clipped rows keep their native hover highlight, clear it and relight the real one
     private void ClearManualHighlights()
     {
         if (partialAreaHover is not null && spotButtons.ContainsKey(partialAreaHover)) partialAreaHover.HoverBackgroundNode.Alpha = 0;
@@ -87,9 +82,19 @@ public sealed partial class NativeJournalWindow
         }
     }
 
+    private void HidePartialHoverTooltip()
+    {
+        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HideTooltip();
+        partialHover = null;
+    }
+
+    private static unsafe bool IsOverAddon(AtkUnitBase* addon, AtkStage* stage)
+        => stage != null && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon;
+
+    private static unsafe void PlayClickSound() => UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
+
     private static bool IsClipped(float top, float bottom, float listHeight) => top < 0 || bottom > listHeight;
 
-    // Work queued by other code to be done on the next frame.
     private void ApplyPendingWork()
     {
         SyncDetailsLayout();
@@ -117,11 +122,10 @@ public sealed partial class NativeJournalWindow
             row.SetAvailability(info.AvailableNow, info.BadgeText, info.Tooltip);
         }
         nextAvailabilityRefresh = Environment.TickCount64 + AvailabilityRefreshIntervalMs;
-        // Relaying the list out resets the scrollbar, so only do it when a row changed height.
+        // relayout resets the scrollbar, only do it when a height changed
         if (Math.Abs(fishButtons.Keys.Sum(row => row.Height) - heightBefore) > 0.5f) RefreshFishListLayout();
     }
 
-    // The cursor's position inside a list, in the list's own units, or null when it is outside.
     private static unsafe Vector2? PositionInList(ScrollingNode<JournalListNode> list, CursorInputData mouse, float addonScale)
     {
         float scale = Math.Max(0.1f, addonScale);
@@ -153,18 +157,15 @@ public sealed partial class NativeJournalWindow
             SetClickableCursor();
             if ((mouse.MouseButtonPressedFlags & MouseButtonFlags.LBUTTON) != 0)
             {
-                // Clicking by hand skips the native click sound, so play it here.
-                UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
+                // hand click skips the native sound
+                PlayClickSound();
                 row.OnClick?.Invoke();
             }
             break;
         }
     }
 
-    // An area header, or a hole row inside the expanded one, can straddle the
-    // bottom of the area list (the map panel usually shrinks it). It draws fine
-    // but eats every click, so a collapsed header is expanded directly and hole
-    // rows are handled like the fish rows above.
+    // a header or hole row cut off by the bottom of the list draws fine but eats clicks
     private unsafe void HandleClippedAreaRows(AtkUnitBase* addon, CursorInputData mouse)
     {
         if (areaList is null || PositionInList(areaList, mouse, addon->Scale) is not { } cursor) return;
@@ -173,9 +174,7 @@ public sealed partial class NativeJournalWindow
         foreach (var header in areaList.ContentNode.GetNodes<AnimatedAreaHeaderNode>())
         {
             float headerTop = header.Y - offset;
-            // Only the title strip matters here, not the whole expanded block:
-            // treating a tall expanded header as clipped sent clicks on its
-            // fully visible rows down this title-only path.
+            // only the title strip counts, a tall expanded header isn't clipped
             float titleBottom = headerTop + AreaHeaderTitleHeight;
             if (IsClipped(headerTop, titleBottom, areaList.Height))
             {
@@ -198,7 +197,7 @@ public sealed partial class NativeJournalWindow
                 SetClickableCursor();
                 if (clicked)
                 {
-                    UIGlobals.PlaySoundEffect(UiClickSoundEffectId);
+                    PlayClickSound();
                     spotButton.OnClick?.Invoke();
                 }
                 return;
@@ -206,7 +205,6 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // Right-clicking the fish guide's search bar clears it.
     private unsafe void HandleSearchRightClick(AtkUnitBase* addon, CursorInputData mouse)
     {
         if (searchInput is null || (mouse.MouseButtonPressedFlags & MouseButtonFlags.RBUTTON) == 0) return;
@@ -228,7 +226,7 @@ public sealed partial class NativeJournalWindow
         float previousHeight = areaList.ContentNode.Height;
         areaList.ContentNode.RecalculateLayout();
         if (animating || previousHeight != areaList.ContentNode.Height) areaList.RecalculateSizes();
-        // Relaying the list out resets every header's X, so the inset is reapplied after.
+        // relayout resets header X, reapply the inset
         ReapplyDropdownLeftInset();
     }
 
@@ -277,8 +275,7 @@ public sealed partial class NativeJournalWindow
 
     protected override unsafe void OnHide(AtkUnitBase* addon)
     {
-        if (partialHover is not null && fishButtons.ContainsKey(partialHover)) partialHover.HideTooltip();
-        partialHover = null;
+        HidePartialHoverTooltip();
         if (partialAreaHover is not null && spotButtons.ContainsKey(partialAreaHover)) partialAreaHover.HoverBackgroundNode.Alpha = 0;
         partialAreaHover = null;
         ReleaseResizeCursor();

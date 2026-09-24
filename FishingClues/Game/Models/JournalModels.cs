@@ -30,14 +30,13 @@ public sealed record JournalSpot(
     ushort RegionPlaceNameId,
     ushort SpotPlaceNameId,
     IReadOnlyList<JournalFish> Fish,
-    // Pixel position on the area's 2048x2048 map texture (1024,1024 is the centre).
-    // Null when the zone has no usable map.
+    // pixel position on the area's 2048 map (1024,1024 is the centre), null if there's no map
     Vector2? MapPixelPosition = null,
-    // Game path of the area's map texture; null alongside MapPixelPosition.
+    // map texture path, null along with MapPixelPosition
     string? MapTexturePath = null,
-    // The hole's world X/Z, used to find the nearest hole to the player.
+    // world X/Z, for finding the nearest hole
     Vector2? WorldPosition = null,
-    // The sheet's Radius, which sizes the hole's range circle on the map.
+    // sheet Radius, sizes the range circle
     int Radius = 0)
 {
     public int CaughtCount => Fish.Count(f => f.IsCaught);
@@ -55,5 +54,10 @@ public sealed record JournalRegion(string Name, bool IsUnlocked, IReadOnlyList<J
     public uint Order => Areas.Count == 0 ? uint.MaxValue : Areas.Min(area => area.Order);
 }
 
-// A fish's heading with its catch-condition lines (bait, time, weather and so on).
+public static class JournalExtensions
+{
+    public static IEnumerable<JournalSpot> AllSpots(this IEnumerable<JournalRegion> regions)
+        => regions.SelectMany(r => r.Areas).SelectMany(a => a.Spots);
+}
+
 public sealed record FishClueSection(string Heading, IReadOnlyList<string> Lines);

@@ -16,9 +16,7 @@ using FishingClues.UI.Windows;
 
 namespace FishingClues.UI;
 
-// Owns every ImGui/native window the plugin shows and the WindowSystem that
-// hosts the Dalamud-side ones. Nothing outside this class touches a window
-// instance directly.
+// owns every window and the WindowSystem for the Dalamud ones
 public sealed class WindowManager
 {
     private readonly Configuration configuration;
@@ -28,9 +26,7 @@ public sealed class WindowManager
     private readonly FishDetailsFormatter formatter;
     private readonly GuideDetailsService guideDetails;
 
-    // Set by Plugin right after both this and the log-replacement controller
-    // exist; the two depend on each other, so neither can be handed a fully
-    // wired reference to the other in its own constructor.
+    // set by Plugin once both exist, they depend on each other
     public Action OpenNormalFishingLog { get; set; } = () => { };
 
     private readonly WindowSystem windowSystem = new("FishingClues");
@@ -90,13 +86,17 @@ public sealed class WindowManager
 
     private void SaveLayout() => Services.PluginInterface.SavePluginConfig(configuration);
 
+    private Vector2 NativeWindowSize => new(
+        Math.Clamp(configuration.NativeWindowWidth, 850.0f, 1600.0f),
+        Math.Clamp(configuration.NativeWindowHeight, 450.0f, 1000.0f));
+
     public void ApplyLiveLayout()
     {
         if (nativeJournal?.IsOpen != true)
             return;
         nativeJournal.ApplyLayout(
-            Math.Clamp(configuration.NativeWindowWidth, 850.0f, 1600.0f),
-            Math.Clamp(configuration.NativeWindowHeight, 450.0f, 1000.0f),
+            NativeWindowSize.X,
+            NativeWindowSize.Y,
             configuration.NativeRegionWidth,
             configuration.NativeAreaWidth,
             configuration.NativeAreaDropdownLeftInset,
@@ -110,8 +110,7 @@ public sealed class WindowManager
         _ = OpenNativeJournalAsync();
     }
 
-    // silenceOpenSound: the game's own Fishing Log that this window is replacing has
-    // just played its open sound, so this one stays quiet rather than doubling it.
+    // silenceOpenSound: the vanilla log this replaces already played one
     public void ToggleNativeJournal(bool silenceOpenSound = false)
     {
         if (nativeJournal?.IsOpen == true)
@@ -126,8 +125,7 @@ public sealed class WindowManager
             nativeJournal.Close();
     }
 
-    // journal/guide windows build their fish list once at construction, so
-    // a content change needs them torn down and reopened, not just redrawn
+    // windows build their fish list once, so content changes reopen them
     public void RefreshContents()
     {
         journal.InvalidateCache();
@@ -135,7 +133,6 @@ public sealed class WindowManager
         if (nativeGuide?.IsOpen == true) _ = OpenGuideAsync();
     }
 
-    // called every frame: keeps the fish guide in step with the journal it was opened from
     public void SyncGuideWithJournal()
     {
         bool journalOpenNow = IsNativeJournalOpen;
@@ -159,7 +156,6 @@ public sealed class WindowManager
     {
         try
         {
-            // Start building the current zone's map now, alongside building the window.
             NativeJournalWindow.PrewarmMapCache(Services.ClientState.TerritoryType);
             await nativeUiInitialization;
             IReadOnlyList<JournalRegion> regions = journal.GetJournal();
@@ -189,9 +185,7 @@ public sealed class WindowManager
                     OpenWindowSoundEffectId = silenceOpenSound ? 0 : 23,
                     Title = "Fishing Log",
                     Subtitle = "Fishing Clues",
-                    Size = new Vector2(
-                        Math.Clamp(configuration.NativeWindowWidth, 850.0f, 1600.0f),
-                        Math.Clamp(configuration.NativeWindowHeight, 450.0f, 1000.0f)),
+                    Size = NativeWindowSize,
                     ContentPadding = new Vector2(14.0f, 12.0f),
                     RememberClosePosition = true,
                 };
@@ -211,7 +205,7 @@ public sealed class WindowManager
             {
                 var regions = journal.GetJournal();
                 FishDataFile data = fishData.Data;
-                var known = regions.SelectMany(r => r.Areas).SelectMany(a => a.Spots).SelectMany(s => s.Fish)
+                var known = regions.AllSpots().SelectMany(s => s.Fish)
                     .GroupBy(f => f.ItemId).ToDictionary(g => g.Key, g => g.First());
                 foreach (var row in Services.DataManager.GetExcelSheet<FishParameterSheet>())
                 {

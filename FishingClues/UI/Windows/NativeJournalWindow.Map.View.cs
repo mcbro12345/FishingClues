@@ -6,8 +6,7 @@ using KamiToolKit.Nodes;
 
 namespace FishingClues.UI.Windows;
 
-// The map's pan and zoom: the maths, and the mouse handling for dragging,
-// scrolling and clicking markers.
+// map pan/zoom and mouse handling
 public sealed partial class NativeJournalWindow
 {
     private const float ClickDragThreshold = 4.0f;
@@ -19,13 +18,10 @@ public sealed partial class NativeJournalWindow
     private float mapDragStartPanY;
     private float mapDragDistance;
 
-    // The map is first centered while the window is still being built, before
-    // the clip has a size, so that centering lands off-center. The first layout
-    // that sizes the clip centers on the same point again.
+    // first centered before the clip has a size, so the first layout centers again
     private Vector2? lastCenteredFocus;
     private bool mapInitialCenterPending = true;
 
-    // Screen pixels per map pixel with the whole 2048px map fitted to the panel width.
     private float BaselineMapScale() => EffectiveMapWidth(areaWidthSetting) / 2048.0f;
 
     private float MapScale() => Math.Max(0.005f, BaselineMapScale() * mapZoom);
@@ -33,7 +29,6 @@ public sealed partial class NativeJournalWindow
     private float MapClipWidth => mapClip?.Width ?? EffectiveMapWidth(areaWidthSetting);
     private float MapClipHeight => mapClip?.Height ?? EffectiveMapHeight();
 
-    // The visible part of the map, in map pixels.
     private (float Left, float Top, float Width, float Height) CurrentMapView()
     {
         float scale = MapScale();
@@ -42,8 +37,7 @@ public sealed partial class NativeJournalWindow
 
     private void CenterMapOn(Vector2 focusPixel)
     {
-        // Zoomed all the way out the whole map is on show, so it is centered
-        // like the game's own map instead of following a hole.
+        // fully zoomed out shows the whole map, centered like the game's
         if (mapZoom <= MinMapZoom + 0.001f) focusPixel = new Vector2(1024.0f, 1024.0f);
         lastCenteredFocus = focusPixel;
         float scale = MapScale();
@@ -62,10 +56,7 @@ public sealed partial class NativeJournalWindow
         mapPanY = Math.Clamp(mapPanY, minPanY, maxPanY);
     }
 
-    // A view smaller than the 2048px map may pan half a view past each edge, so
-    // any point can be brought to the middle - but only once zoomed in. Zoomed all
-    // the way out it stays inside the map, so the black backdrop never shows.
-    // A view that already fits the whole map has no room to move and stays centered.
+    // zoomed in you can pan half a view past the edges, zoomed out it stays inside so no black shows. A view that fits has no room to move
     private static (float Min, float Max) ClampedPanRange(float viewSize, bool keepInsideMap)
     {
         float freeSpace = 2048.0f - viewSize;
@@ -86,15 +77,14 @@ public sealed partial class NativeJournalWindow
         UpdateMarkerLayout();
     }
 
-    // Called every frame from OnDraw. The map has no ImGui behind it, so
-    // hit-testing is done by hand.
+    // per frame, hit-testing is by hand
     private unsafe void UpdateMapInteraction(AtkUnitBase* addon, CursorInputData mouse, AtkStage* stage)
     {
         if (mapClip is null || mapContent is null || !MapEnabled || GuideMode) return;
         MeasurePendingTooltips();
         UpdatePlayerMarker();
         float scale = Math.Max(0.1f, addon->Scale);
-        bool overAddon = stage != null && stage->AtkCollisionManager != null && stage->AtkCollisionManager->IntersectingAddon == addon;
+        bool overAddon = IsOverAddon(addon, stage);
 
         if (draggingMap)
         {

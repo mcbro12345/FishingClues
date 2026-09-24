@@ -11,8 +11,7 @@ using FishingClues.UI;
 
 namespace FishingClues;
 
-// The text report behind the settings window's diagnostics button: plugin
-// state plus what the game reports about fishing hole discovery.
+// text behind the settings diagnostics button
 internal sealed class DiagnosticsReport(Configuration configuration, NormalLogReplacementController normalLog, WindowManager windowManager)
 {
     public unsafe string Build()

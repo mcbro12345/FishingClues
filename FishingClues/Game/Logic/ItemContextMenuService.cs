@@ -15,9 +15,7 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.Game.Logic;
 
-// Adds "Search Fishing Clues" to item context menus, and the native item
-// link click-through KamiToolKit's item rows use to open the game's own
-// item context menu.
+// adds "Search Fishing Clues" to item menus, plus the click-through KamiToolKit's item rows use
 public sealed class ItemContextMenuService
 {
     private static uint pendingItemMenu;

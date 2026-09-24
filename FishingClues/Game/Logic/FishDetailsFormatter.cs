@@ -9,8 +9,7 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.Game.Logic;
 
-// Turns a fish's raw catch-condition data into the bait/time/weather lines
-// shown in the clue popup, the journal's detail panel, and the guide.
+// turns fish condition data into the detail lines
 public sealed class FishDetailsFormatter
 {
     private readonly FishDataService fishData;
@@ -39,17 +38,15 @@ public sealed class FishDetailsFormatter
         return new FishClueSection(heading, lines);
     }
 
-    public IReadOnlyList<string> BuildRequirementLines(uint itemId, uint spotId = 0, uint nameSpotId = 0)
+    public IReadOnlyList<string> BuildRequirementLines(uint itemId, uint spotId = 0, bool includeBaits = true)
     {
         FishDataFile data = fishData.Data;
         var lines = new List<string>();
-        lines.AddRange(BuildBaitLines(itemId, spotId));
+        if (includeBaits) lines.AddRange(BuildBaitLines(itemId, spotId));
         if (!data.Fish.TryGetValue(itemId, out FishCondition? condition))
         {
             lines.Add("Requirements unknown."); return lines;
         }
-        // The time, weather and previous-weather requirements in one line, worded
-        // exactly like the availability badges.
         if (IsGated(condition))
             lines.Add($"Availability: {AvailableSentence(condition)}");
         if (condition.RequirementsKnown && condition.StartHour == 0 && condition.EndHour == 24 &&
@@ -57,7 +54,7 @@ public sealed class FishDetailsFormatter
             condition.Folklore is null && condition.Snagging != true && string.IsNullOrWhiteSpace(condition.Lure))
             lines.Add("No special requirements.");
         if (condition.Predators.Any(p => p.Count >= 2) || (condition.IntuitionSeconds is int intuitionSeconds && intuitionSeconds > 0))
-            lines.Add($"Intuition: {IntuitionSentence(condition, spotId != 0 ? spotId : nameSpotId)}");
+            lines.Add($"Intuition: {IntuitionSentence(condition, spotId)}");
         if (condition.Folklore is uint folklore) lines.Add($"Folklore: {data.Folklore.GetValueOrDefault(folklore, $"Book #{folklore}")}");
         if (condition.FishEyes == true) lines.Add("Fish Eyes: supported");
         if (condition.Snagging == true) lines.Add("Snagging: required");
@@ -110,14 +107,9 @@ public sealed class FishDetailsFormatter
             AppendMooch(bait, spot, new HashSet<uint>(visited), depth + 1, lines);
     }
 
-    // Highest item level first (ties keep their original order) when the
-    // "Sort bait by item level" setting is on; otherwise the order as given.
     public IEnumerable<uint> SortByItemLevel(IEnumerable<uint> ids)
         => configuration.SortBaitByItemLevel ? ids.OrderByDescending(ItemLevel) : ids;
 
-    // The order for a fish's "Bait:" line in the details panel: highest item
-    // level first (then by name) when "Sort bait by item level" is on, and the
-    // long-standing lowest equip level first (then by name) when it is off.
     public IEnumerable<uint> OrderBait(IEnumerable<uint> ids)
     {
         if (configuration.SortBaitByItemLevel)
@@ -130,16 +122,7 @@ public sealed class FishDetailsFormatter
 
     public string ItemName(uint id) => Services.DataManager.GetExcelSheet<ItemSheet>().TryGetRow(id, out var item) ? item.Name.ToString() : fishData.Data.Items.GetValueOrDefault(id, $"Item #{id}");
 
-    // Shared wording for a fish's time/weather/previous-weather requirements,
-    // used by the availability badges and the fish details alike. Built from up
-    // to two noun phrases - the time window ("9:00pm-3:00am ET") and the weather
-    // ("Rain / Showers", "Rain after Fog", "any weather after Fog"):
-    //   Available during the 9:00pm-3:00am ET window.
-    //   Available with Rain / Showers.
-    //   Available with Rain after Fog during a 9:00pm-3:00am ET window.
-    //   Waiting for the 9:00pm-3:00am ET window.
-    //   Waiting for Rain / Showers.
-    //   Waiting for Rain after Fog during a 9:00pm-3:00am ET window.
+    // shared wording for time/weather requirements, used by the badges and the details
     public static bool IsGated(FishCondition condition)
         => condition.StartHour != 0 || condition.EndHour != 24 || condition.Weather.Count > 0 || condition.PreviousWeather.Count > 0;
 
@@ -171,15 +154,7 @@ public sealed class FishDetailsFormatter
 
     public string FormatWeather(List<uint> ids, string fallback) => ids.Count == 0 ? fallback : string.Join(" / ", ids.Select(id => fishData.Data.Weather.GetValueOrDefault(id, $"Weather #{id}")));
 
-    // What to catch to open this fish's Intuition window, and how long it lasts - shared,
-    // word for word, by the availability badge (before the window is open) and the fish
-    // details panel (which always shows this, whether or not the window is open right now):
-    //   Catch 6x Wahoo to gain a 2m catch window.
-    //   Catch 6x Wahoo or 5x Marlin to gain a 1m 30s catch window.
-    // No "2:00" here - in the guide, every detail line is split into a heading and a value
-    // at its first colon (that's how "Bait: ..." renders), and a raw clock time would get
-    // split apart there too, so the duration uses the same "Xm Ys" style as everywhere else
-    // durations are shown (e.g. "Ends in 1h 53m 12s") instead.
+    // shared by the badge and the details. No "2:00" in it, the guide splits lines at the first colon
     public string IntuitionSentence(FishCondition condition, uint spotId = 0)
     {
         string[] chains = condition.Predators.Where(p => p.Count >= 2)
@@ -195,14 +170,12 @@ public sealed class FishDetailsFormatter
         return $"Catch {what}{window}.";
     }
 
-    // A predator that is itself an undiscovered fish at this hole is named the way the list
-    // names it ("Unknown Fish #4", its place among the not-caught fish) so this can't spoil it.
+    // undiscovered predators show as Unknown Fish #N so they aren't spoiled
     public string SpoilerSafeName(uint itemId, uint spotId)
     {
         if (spotId != 0)
         {
-            var missing = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots)
-                .FirstOrDefault(s => s.Id == spotId)?.Fish.Where(f => !f.IsCaught).ToList();
+            var missing = journal.FindSpot(spotId)?.Fish.Where(f => !f.IsCaught).ToList();
             int index = missing?.FindIndex(f => f.ItemId == itemId) ?? -1;
             if (index >= 0 && !missing![index].IdentityVisible) return $"Unknown Fish #{index + 1}";
         }

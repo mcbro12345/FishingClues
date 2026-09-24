@@ -11,8 +11,7 @@ namespace FishingClues.Game.Logic;
 
 public sealed record FishAvailabilityInfo(bool AvailableNow, string BadgeText, string Tooltip);
 
-// Turns a fish's time/weather requirements into the "available now" or
-// "waiting for..." badge shown next to it in the journal.
+// builds the available/waiting badge for a fish
 public sealed class AvailabilityService
 {
     private const int MaxAvailabilityWindowsToScan = 216; // ~3.5 real days of weather windows.
@@ -58,14 +57,10 @@ public sealed class AvailabilityService
         bool weatherOk = !weatherGated || (currentWeather is uint cw && condition.Weather.Contains(cw));
         uint? prevWeather = prevWeatherGated ? GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(EorzeaWeather.WindowStart(now) - EorzeaWeather.SecondsPerWeatherWindow)) : null;
         bool prevOk = !prevWeatherGated || (prevWeather is uint pw && condition.PreviousWeather.Contains(pw));
-        // Player-triggered, unlike the others: read fresh every call, so this ticks
-        // down live with the game's own buff timer instead of a calculated end time.
+        // player-triggered, read fresh each call
         IntuitionStatus? intuition = intuitionGated ? IntuitionService.GetActive() : null;
         bool intuitionOk = !intuitionGated || IsMatchingIntuition(fish, intuition);
 
-        // The sentences themselves (see FishDetailsFormatter.AvailableSentence and
-        // WaitingSentence) are shared with the fish details, so the badges and the
-        // details always word the requirements identically.
         if (timeOk && weatherOk && prevOk && intuitionOk)
         {
             string availableTooltip = !intuitionGated
@@ -90,8 +85,7 @@ public sealed class AvailabilityService
             return new FishAvailabilityInfo(true, $"{availableCountdown} | {availableTooltip}", availableTooltip);
         }
 
-        // Intuition is player-triggered, so there's no "starts in" to calculate for it -
-        // say what to do instead. If time/weather are also unmet, that's said first.
+        // intuition has no start time, so say what to do instead
         string tooltip = intuitionGated && !intuitionOk
             ? (timeOk && weatherOk && prevOk ? formatter.IntuitionSentence(condition, fish.SpotId) : $"{formatter.WaitingSentence(condition)} {formatter.IntuitionSentence(condition, fish.SpotId)}")
             : formatter.WaitingSentence(condition);
@@ -106,19 +100,13 @@ public sealed class AvailabilityService
         return new FishAvailabilityInfo(false, $"{waitingCountdown} | {tooltip}", tooltip);
     }
 
-    // Matches the live Intuition buff to this specific fish. Param is presumed to carry the
-    // FishParameter or item ID of the fish it unlocks (unverified against a live game - if
-    // badges don't line up with what's actually open, that assumption needs checking). As a
-    // fallback when Param doesn't match anything, or its meaning turns out to be something
-    // else entirely, this also accepts the buff for a fish if it's the only intuition-gated
-    // fish at that hole, which covers the common case without guessing wrong at a hole that
-    // has more than one.
+    // matches the live Intuition buff to a fish. Param is assumed to be its FishParameter/item id (unverified), otherwise accept it if it's the only intuition fish at the hole
     private bool IsMatchingIntuition(JournalFish fish, IntuitionStatus? intuition)
     {
         if (intuition is null) return false;
         if (intuition.Param == fish.FishParameterId || intuition.Param == fish.ItemId) return true;
         if (fish.SpotId == 0) return false;
-        JournalSpot? spot = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots).FirstOrDefault(s => s.Id == fish.SpotId);
+        JournalSpot? spot = journal.FindSpot(fish.SpotId);
         if (spot is null) return false;
         int intuitionFishAtSpot = spot.Fish.Count(f => fishData.Data.Fish.TryGetValue(f.ItemId, out var c)
             && c.IntuitionSeconds is int seconds && seconds > 0 && c.Predators.Any(p => p.Count >= 2));
@@ -129,7 +117,7 @@ public sealed class AvailabilityService
     {
         if (fish.SpotId != 0)
         {
-            JournalSpot? spot = journal.GetJournal().SelectMany(r => r.Areas).SelectMany(a => a.Spots).FirstOrDefault(s => s.Id == fish.SpotId);
+            JournalSpot? spot = journal.FindSpot(fish.SpotId);
             if (spot is not null) return spot.TerritoryId;
         }
         FishLocation? location = fishData.Data.Locations.FirstOrDefault(l => l.ItemId == fish.ItemId);
@@ -139,18 +127,30 @@ public sealed class AvailabilityService
         return null;
     }
 
+    // weather for each 0-99 target of a zone's rate table, built once per zone
+    private static readonly Dictionary<uint, uint?[]> WeatherTables = new();
+
     private static uint? GetWeatherId(uint weatherRateId, byte target)
     {
-        if (weatherRateId == 0 || !Services.DataManager.GetExcelSheet<WeatherRate>().TryGetRow(weatherRateId, out WeatherRate row))
-            return null;
+        if (weatherRateId == 0) return null;
+        if (!WeatherTables.TryGetValue(weatherRateId, out var table))
+            WeatherTables[weatherRateId] = table = BuildWeatherTable(weatherRateId);
+        return target < table.Length ? table[target] : null;
+    }
+
+    private static uint?[] BuildWeatherTable(uint weatherRateId)
+    {
+        var table = new uint?[100];
+        if (!Services.DataManager.GetExcelSheet<WeatherRate>().TryGetRow(weatherRateId, out WeatherRate row)) return table;
         byte cumulative = 0;
+        int target = 0;
         foreach (var (rate, weather) in row.Rate.Zip(row.Weather))
         {
             if (rate == 0) continue;
             cumulative += rate;
-            if (cumulative > target) return weather.RowId;
+            for (; target < cumulative && target < table.Length; target++) table[target] = weather.RowId;
         }
-        return null;
+        return table;
     }
 
     private static bool WeatherMatchesAt(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long ws)
@@ -160,57 +160,64 @@ public sealed class AvailabilityService
         return !prevWeatherGated || (GetWeatherId(weatherRateId, EorzeaWeather.CalculateTarget(ws - EorzeaWeather.SecondsPerWeatherWindow)) is uint pw && condition.PreviousWeather.Contains(pw));
     }
 
-    private static long? FindNextAvailability(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long now)
+    // the next weather windows from now: where each starts, and the earliest time in it that counts
+    private static IEnumerable<(long Start, long Earliest)> UpcomingWindows(long now)
     {
-        long windowStart = EorzeaWeather.WindowStart(now);
+        long first = EorzeaWeather.WindowStart(now);
         for (int i = 0; i < MaxAvailabilityWindowsToScan; i++)
         {
-            long ws = windowStart + i * EorzeaWeather.SecondsPerWeatherWindow;
+            long start = first + i * EorzeaWeather.SecondsPerWeatherWindow;
+            yield return (start, i == 0 ? now : start);
+        }
+    }
+
+    private static long? FindNextAvailability(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, long now)
+    {
+        foreach (var (ws, earliest) in UpcomingWindows(now))
+        {
             if (!WeatherMatchesAt(condition, weatherRateId, weatherGated, prevWeatherGated, ws)) continue;
-            long? match = FirstTimeMatchInWindow(ws, condition.StartHour, condition.EndHour, i == 0 ? now : ws);
-            if (match is long t) return t;
+            if (FirstTimeMatchInWindow(ws, condition.StartHour, condition.EndHour, earliest) is long t) return t;
         }
         return null;
     }
 
     private static long? FindAvailabilityEnd(FishCondition condition, uint weatherRateId, bool weatherGated, bool prevWeatherGated, bool timeGated, long now)
     {
-        long windowStart = EorzeaWeather.WindowStart(now);
-        for (int i = 0; i < MaxAvailabilityWindowsToScan; i++)
+        foreach (var (ws, earliest) in UpcomingWindows(now))
         {
-            long ws = windowStart + i * EorzeaWeather.SecondsPerWeatherWindow;
-            long windowEnd = ws + EorzeaWeather.SecondsPerWeatherWindow;
             if (!WeatherMatchesAt(condition, weatherRateId, weatherGated, prevWeatherGated, ws))
                 return Math.Max(now, ws);
-            if (!timeGated)
-                continue;
-            long? end = TimeWindowEndWithin(ws, condition.StartHour, condition.EndHour, i == 0 ? now : ws, windowEnd);
-            if (end is long t) return t;
+            if (!timeGated) continue;
+            if (TimeWindowEndWithin(ws, condition.StartHour, condition.EndHour, earliest, ws + EorzeaWeather.SecondsPerWeatherWindow) is long t) return t;
         }
         return null;
     }
-
     private static bool InTimeWindow(double hour, double start, double end)
     {
         if (start == 0 && end == 24) return true;
         return start <= end ? hour >= start && hour < end : hour >= start || hour < end;
     }
 
-    private static long? FirstTimeMatchInWindow(long windowStart, double startHour, double endHour, long earliestAllowed)
+    // an hour range clipped to the weather band that starts at windowStart, as unix seconds.
+    // null if the range doesn't touch the band
+    private static (long Start, long End)? ClipToBand(long windowStart, double startHour, double endHour)
     {
         double bandStart = EorzeaWeather.EorzeaHourOfDay(windowStart);
-        double bandEnd = bandStart + 8;
+        double from = Math.Max(startHour, bandStart), to = Math.Min(endHour, bandStart + 8);
+        if (to <= from) return null;
+        return (windowStart + (long)Math.Round((from - bandStart) * EorzeaWeather.SecondsPerEorzeaHour),
+            windowStart + (long)Math.Round((to - bandStart) * EorzeaWeather.SecondsPerEorzeaHour));
+    }
+
+    private static long? FirstTimeMatchInWindow(long windowStart, double startHour, double endHour, long earliestAllowed)
+    {
         var candidates = new List<long>();
 
         void Consider(double s, double e)
         {
-            double overlapStart = Math.Max(s, bandStart);
-            double overlapEnd = Math.Min(e, bandEnd);
-            if (overlapEnd <= overlapStart) return;
-            long candidateStart = windowStart + (long)Math.Round((overlapStart - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
-            long candidateEnd = windowStart + (long)Math.Round((overlapEnd - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
-            long effective = Math.Max(candidateStart, earliestAllowed);
-            if (effective < candidateEnd) candidates.Add(effective);
+            if (ClipToBand(windowStart, s, e) is not (long start, long end)) return;
+            long effective = Math.Max(start, earliestAllowed);
+            if (effective < end) candidates.Add(effective);
         }
 
         if (startHour == 0 && endHour == 24) candidates.Add(Math.Max(windowStart, earliestAllowed));
@@ -220,42 +227,29 @@ public sealed class AvailabilityService
         return candidates.Count == 0 ? null : candidates.Min();
     }
 
-    // A condition's end hour landing exactly on the weather band boundary is only
-    // ambiguous when the condition's real end is further out and got clipped to the
-    // band - then the caller re-checks weather for the next band before concluding
-    // the fish stays available. When the real end hour IS the band boundary, there is
-    // nothing left to check and this is the true end, even though it also lands on
-    // windowEnd.
+    // an end hour on the band boundary only counts as the end if the band didn't clip it
     private static long? TimeWindowEndWithin(long windowStart, double startHour, double endHour, long earliestAllowed, long windowEnd)
     {
         if (startHour == 0 && endHour == 24) return null;
 
-        double bandStart = EorzeaWeather.EorzeaHourOfDay(windowStart);
-        double bandEnd = bandStart + 8;
+        double bandEnd = EorzeaWeather.EorzeaHourOfDay(windowStart) + 8;
 
         (long End, bool ClippedByBand)? EndOf(double s, double e)
         {
-            double overlapStart = Math.Max(s, bandStart);
-            double overlapEnd = Math.Min(e, bandEnd);
-            if (overlapEnd <= overlapStart) return null;
-            long candidateStart = windowStart + (long)Math.Round((overlapStart - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
-            long candidateEnd = windowStart + (long)Math.Round((overlapEnd - bandStart) * EorzeaWeather.SecondsPerEorzeaHour);
-            if (candidateStart > earliestAllowed || candidateEnd <= earliestAllowed) return null;
-            return (candidateEnd, e > bandEnd);
+            if (ClipToBand(windowStart, s, e) is not (long start, long end)) return null;
+            if (start > earliestAllowed || end <= earliestAllowed) return null;
+            return (end, e > bandEnd);
         }
 
         bool wrapsPastMidnight = startHour > endHour;
         var evening = wrapsPastMidnight ? EndOf(startHour, 24) : null;
         var result = wrapsPastMidnight ? evening ?? EndOf(0, endHour) : EndOf(startHour, endHour);
         if (result is not (long end, bool clippedByBand)) return null;
-        // A window such as 9:00pm-3:00am does not end at midnight, where its first part is cut
-        // off by the day boundary; it carries on into the next day's first band.
+        // 9pm-3am carries into the next day's first band
         bool carriesPastMidnight = evening is not null && endHour > 0 && end == windowEnd;
         return (clippedByBand || carriesPastMidnight) && end == windowEnd ? null : end;
     }
-
-    // Read after "Ends in" / "Starts in": "45s", "12m 05s", "1h 53m 12s", "2d 4h 53m 12s".
-    // Leading units of zero are left out. Whole seconds, rounded up, so it reads zero only at zero.
+    // "45s", "12m 05s", "1h 53m 12s": leading zero units dropped, seconds rounded up
     private static string FormatCountdown(TimeSpan span)
     {
         long total = (long)Math.Ceiling(Math.Max(0.0, span.TotalSeconds));

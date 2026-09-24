@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using System.Linq;
-using FFXIVClientStructs.FFXIV.Client.UI;
 using KamiToolKit.BaseTypes;
 using KamiToolKit.Nodes;
 
@@ -12,9 +11,7 @@ namespace FishingClues.UI.Windows;
 // Picking a region and filling the area list with its areas and fishing holes.
 public sealed partial class NativeJournalWindow
 {
-    // forceOpenArea and forceSelectSpot override the remembered view: used to open at the player's
-    // location and at a newly discovered hole. zoomToForcedSpot additionally zooms the map to
-    // forceSelectSpot, as if it had been clicked; only the newly-discovered-hole case asks for that.
+    // force* override the remembered view (player location / newly discovered hole), zoomToForcedSpot also zooms the map there
     private void SelectRegion(JournalRegion region, bool restoring = false, JournalArea? forceOpenArea = null,
         JournalSpot? forceSelectSpot = null, bool zoomToForcedSpot = false)
     {
@@ -40,7 +37,7 @@ public sealed partial class NativeJournalWindow
         if (areaList is null || fishList is null)
             return;
 
-        // One area is open at a time: the one holding the hole about to be selected, else the first.
+        // one area open at a time
         JournalArea? openArea = forceOpenArea
             ?? region.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == sessionState.SelectedSpot))
             ?? region.Areas.FirstOrDefault();
@@ -62,17 +59,15 @@ public sealed partial class NativeJournalWindow
             fishList.ContentNode.Clear();
             RefreshFishListLayout();
         }
-        // Until a hole has been picked the map is only a generic backdrop; after that only picking a hole changes it.
+        // the map stays a generic backdrop until a hole is picked
         if (mapArea is null) RefreshMapPreview(openArea);
         if (remembered is not null) {
             RestoreScroll(areaList, remembered.AreaScroll);
-            RestoreFishScroll(remembered.FishScroll);
-            RestoreDetailsScroll(remembered.DetailsScroll);
+            RestoreScroll(fishList, remembered.FishScroll);
+            RestoreScroll(detailsList, remembered.DetailsScroll);
         }
     }
 
-    // Fills the area list with the region's areas and holes. Headers and buttons already
-    // on screen are reused rather than replaced, since new nodes draw blank for a frame.
     private void PopulateAreaList(JournalRegion region, JournalArea? openArea)
     {
         if (areaList is null) return;
@@ -106,41 +101,21 @@ public sealed partial class NativeJournalWindow
         areaList.RecalculateSizes();
     }
 
-    // Matches the header's rows to the area's holes.
     private void FillAreaHeader(AnimatedAreaHeaderNode header, JournalArea area)
-    {
-        var existing = header.Nodes.ToList();
-        for (int i = 0; i < area.Spots.Count; i++)
-        {
-            JournalSpot spot = area.Spots[i];
-            bool sameKind = i < existing.Count && (spot.IsUnlocked ? existing[i] is ListButtonNode : existing[i] is LabelTextNode);
-            if (i < existing.Count && !sameKind)
+        => ReconcileNodes(header, area.Spots,
+            (node, spot) => spot.IsUnlocked ? node is ListButtonNode : node is LabelTextNode,
+            spot => spot.IsUnlocked ? new ListButtonNode { Height = 25.0f } : new LabelTextNode { Height = 25.0f, FontSize = 14 },
+            (node, spot) =>
             {
-                for (int j = existing.Count - 1; j >= i; j--) header.RemoveNode(existing[j]);
-                existing.RemoveRange(i, existing.Count - i);
-            }
-            NodeBase node;
-            if (i < existing.Count) node = existing[i];
-            else
-            {
-                node = spot.IsUnlocked
-                    ? new ListButtonNode { Height = 25.0f }
-                    : new LabelTextNode { Height = 25.0f, FontSize = 14 };
-                header.AddNode(node);
-                existing.Add(node);
-            }
-            if (node is ListButtonNode button)
-            {
-                button.String = $"  {spot.Name}";
-                button.Selected = false;
-                button.OnClick = () => SelectSpot(spot, zoomToSpot: true);
-                spotButtons[button] = spot.Id;
-            }
-            else if (node is LabelTextNode label) label.String = "  Undiscovered";
-        }
-        for (int j = existing.Count - 1; j >= area.Spots.Count; j--) header.RemoveNode(existing[j]);
-    }
-
+                if (node is ListButtonNode button)
+                {
+                    button.String = $"  {spot.Name}";
+                    button.Selected = false;
+                    button.OnClick = () => SelectSpot(spot, zoomToSpot: true);
+                    spotButtons[button] = spot.Id;
+                }
+                else if (node is LabelTextNode label) label.String = "  Undiscovered";
+            });
     private void OnAreaToggled(AnimatedAreaHeaderNode header, bool expanded, List<AnimatedAreaHeaderNode> headers)
     {
         if (!expanded)
@@ -162,18 +137,16 @@ public sealed partial class NativeJournalWindow
         // Toggling can add/remove the scrollbar, which changes the column width.
         ApplyAreaDropdownWidths();
         // Area headers open silently on their own, so play the click sound (not when collapsing).
-        unsafe { UIGlobals.PlaySoundEffect(UiClickSoundEffectId); }
+        PlayClickSound();
     }
 
-    // RecalculateSizes() alone leaves rows measuring against a stale column
-    // width, so FitWidth rows (the availability badges) need RecalculateLayout too.
+    // RecalculateSizes alone leaves FitWidth rows stale, RecalculateLayout too
     private void RefreshFishListLayout()
     {
         fishList?.RecalculateSizes();
         fishList?.ContentNode.RecalculateLayout();
     }
 
-    // Opens the dropdown of the area holding the spot; that collapses the others (see SelectRegion).
     private void OpenAreaContaining(JournalSpot spot)
     {
         JournalArea? area = selectedRegion?.Areas.FirstOrDefault(a => a.Spots.Any(s => s.Id == spot.Id));

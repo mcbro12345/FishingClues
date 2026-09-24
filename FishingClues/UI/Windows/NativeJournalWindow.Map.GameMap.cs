@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
-using Dalamud.Interface.Textures;
 using Lumina.Data.Files;
 using TerritoryTypeSheet = Lumina.Excel.Sheets.TerritoryType;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -14,18 +13,14 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.UI.Windows;
 
-// The round fish button beside "Locations Discovered". It opens the game's own map at the
-// picked hole and marks it the way the Gathering Log marks a node: the fish icon and the
-// hole's range circle.
+// fish button by "Locations Discovered", opens the main map at the picked hole
 public sealed partial class NativeJournalWindow
 {
     private const float GameMapButtonSize = 28.0f;
-    // Big enough for the fish to fill the circle (the icon has empty margins around the fish).
     private const float GameMapButtonIconSize = 30.0f;
-    // The fish is not centred in its icon (measured: about 1.5px left and 1px low of the icon's
-    // middle at 64px), so it is shifted by that much, scaled to the button.
+    // the fish isn't centred in its icon, this is the measured offset
     private static readonly Vector2 GameMapButtonIconOffset = new(0.8f, -0.5f);
-    // The cog's circle in the 2x sheet, and how much of its middle holds the cog and its shadow.
+    // the cog's circle sprite and the radius of the glyph to paint out
     private const string CircleButtonSheetPath = "ui/uld/CircleButtons_hr1.tex";
     private const int CircleSpriteSize = 56;
     private const double CircleGlyphRadius = 17.5;
@@ -34,13 +29,13 @@ public sealed partial class NativeJournalWindow
 
     private TextureButtonNode? gameMapButton;
     private ImGuiImageNode? gameMapButtonIcon;
-    // Shown only once the circle and the fish have loaded: an image node with no texture draws black.
+    // hidden until both textures load, no texture draws black
     private bool gameMapCircleReady;
     private bool gameMapIconReady;
 
     private void CreateGameMapButton()
     {
-        // The circle the settings cog sits on, with the cog painted out (see BuildBlankCircle).
+        // cog circle with the cog painted out
         gameMapButton = new TextureButtonNode
         {
             Size = new Vector2(GameMapButtonSize, GameMapButtonSize),
@@ -52,7 +47,7 @@ public sealed partial class NativeJournalWindow
         gameMapButton.AttachNode(this);
         _ = LoadGameMapCircleAsync(gameMapButton);
         float inset = (GameMapButtonSize - GameMapButtonIconSize) / 2.0f;
-        gameMapButtonIcon = new ImGuiImageNode
+        var icon = gameMapButtonIcon = new ImGuiImageNode
         {
             Size = new Vector2(GameMapButtonIconSize, GameMapButtonIconSize),
             Position = new Vector2(inset, inset) + GameMapButtonIconOffset,
@@ -61,12 +56,10 @@ public sealed partial class NativeJournalWindow
         };
         gameMapButtonIcon.AttachNode(gameMapButton);
         AddGameMapIconTimeline(gameMapButtonIcon, gameMapButtonIcon.Position);
-        _ = LoadGameMapButtonIconAsync(gameMapButtonIcon);
+        _ = LoadGameIconAsync(icon, FishMapMarkerIconId, () => ReferenceEquals(icon, gameMapButtonIcon), () => gameMapIconReady = true);
     }
 
-    // The button animates only its own circle. This gives the fish the same press (down a
-    // pixel) and disabled (dimmed) states, on the same frame numbers as the button's timeline
-    // (see ButtonBase.LoadTwoPartTimelines), so it moves and dims along with the circle.
+    // same press/disabled frames as the button's own timeline so the fish follows it
     private static void AddGameMapIconTimeline(ImGuiImageNode icon, Vector2 rest)
     {
         var full = new Vector3(100.0f);
@@ -80,27 +73,12 @@ public sealed partial class NativeJournalWindow
             .Build());
     }
 
-    // The circle sprites all have their glyph baked in, so the cog is painted out: inside the
-    // area the glyph covers, each row is filled by blending between the clean shading just
-    // outside it on either side.
+    // there's no blank circle sprite, so blend the shading across the cog
     private static byte[]? BuildBlankCircle()
     {
-        var sheet = Services.DataManager.GetFile<TexFile>(CircleButtonSheetPath);
-        if (sheet is null) return null;
-        int width = sheet.Header.Width;
-        byte[] source = sheet.ImageData;
+        var rgba = ReadRgbaSquare(CircleButtonSheetPath, 0, 0, CircleSpriteSize);
+        if (rgba is null) return null;
         const int size = CircleSpriteSize;
-        var rgba = new byte[size * size * 4];
-        for (int y = 0; y < size; y++)
-            for (int x = 0; x < size; x++)
-            {
-                int from = (y * width + x) * 4, to = (y * size + x) * 4;
-                // Lumina's image data is BGRA, the texture RGBA.
-                rgba[to + 0] = source[from + 2];
-                rgba[to + 1] = source[from + 1];
-                rgba[to + 2] = source[from + 0];
-                rgba[to + 3] = source[from + 3];
-            }
         double centre = (size - 1) / 2.0;
         for (int y = 0; y < size; y++)
         {
@@ -124,58 +102,11 @@ public sealed partial class NativeJournalWindow
 
     private async Task LoadGameMapCircleAsync(TextureButtonNode button)
     {
-        try
-        {
-            byte[]? pixels = await Task.Run(BuildBlankCircle);
-            if (pixels is null) return;
-            var texture = await Services.TextureProvider.CreateFromRawAsync(
-                RawImageSpecification.Rgba32(CircleSpriteSize, CircleSpriteSize), pixels, "FishingCluesGameMapCircle");
-            await Services.Framework.Run(() =>
-            {
-                if (!ReferenceEquals(button, gameMapButton))
-                {
-                    texture.Dispose();
-                    return;
-                }
-                if (button.ImageNode is not ImGuiImageNode image) { texture.Dispose(); return; }
-                image.LoadTexture(texture);
-                image.TextureSize = new Vector2(CircleSpriteSize, CircleSpriteSize);
-                gameMapCircleReady = true;
-            });
-        }
-        catch (Exception ex)
-        {
-            Services.Log.Warning(ex, "[FishingClues] Game map button: failed to build the button circle.");
-        }
+        byte[]? pixels = await Task.Run(BuildBlankCircle);
+        if (pixels is not null && button.ImageNode is ImGuiImageNode image)
+            await ShowRgbaAsync(image, pixels, CircleSpriteSize, "FishingCluesGameMapCircle",
+                () => ReferenceEquals(button, gameMapButton), () => gameMapCircleReady = true);
     }
-
-    private async Task LoadGameMapButtonIconAsync(ImGuiImageNode node)
-    {
-        Dalamud.Interface.Textures.TextureWraps.IDalamudTextureWrap texture;
-        try
-        {
-            texture = await Services.TextureProvider.GetFromGameIcon(FishMapMarkerIconId).RentAsync();
-        }
-        catch (Exception ex)
-        {
-            Services.Log.Warning(ex, "[FishingClues] Game map button: failed to load the fish icon.");
-            return;
-        }
-        await Services.Framework.Run(() =>
-        {
-            if (!ReferenceEquals(node, gameMapButtonIcon))
-            {
-                texture.Dispose();
-                return;
-            }
-            node.LoadTexture(texture);
-            node.Alpha = 1.0f;
-            gameMapIconReady = true;
-        });
-    }
-
-    // The button belongs to the caption, so it shows with it, and works once a hole in this
-    // area is picked. Called every frame; only writes when something changed.
     private void UpdateGameMapButton()
     {
         if (gameMapButton is null) return;
@@ -191,7 +122,6 @@ public sealed partial class NativeJournalWindow
 
     private void PositionGameMapButton(float areaRight, float captionTop)
     {
-        // On the "Locations Discovered" line, at the right end of the caption.
         if (gameMapButton is not null)
             gameMapButton.Position = contentOrigin + new Vector2(areaRight - GameMapButtonSize - 6.0f, captionTop - 1.0f);
     }
@@ -200,12 +130,9 @@ public sealed partial class NativeJournalWindow
         => selectedSpot is { } spot && mapArea is not null && spot.MapPixelPosition is not null
             && mapArea.Spots.Any(s => s.Id == spot.Id) ? spot : null;
 
-    // The style flag GatherBuddy gives its temporary gathering markers.
     private const uint GatheringMarkerStyle = 4;
 
-    // Puts the hole on the game's map as a temporary gathering marker (icon, range circle and
-    // name) and opens the map in Gathering Log mode, the way GatherBuddy does it, but without
-    // its red flag. The marker goes in before the map opens.
+    // same approach as GatherBuddy minus the flag, marker goes in before the map opens
     private unsafe void OpenGameMap()
     {
         if (GameMapSpot() is not { WorldPosition: Vector2 raw } spot) return;
@@ -220,9 +147,7 @@ public sealed partial class NativeJournalWindow
         agent->OpenMap(map.RowId, spot.TerritoryId, spot.Name, MapType.GatheringLog);
     }
 
-    // A fishing spot's X or Z as the map agent's marker coordinate: out to the map's whole-number
-    // coordinate and back into the agent's internal units (GatherBuddy's MarkerToMap and
-    // IntegerToInternal), before the map's own offset is taken off.
+    // GatherBuddy's MarkerToMap + IntegerToInternal
     private static int GameMapCoordinate(float raw, float scale)
     {
         int integral = (int)(2 * raw / scale + 100.9);

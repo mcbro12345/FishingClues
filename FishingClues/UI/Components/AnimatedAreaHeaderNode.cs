@@ -12,7 +12,7 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
     private bool ready;
     public bool RestoreExpandedOnNextTick { get; set; }
 
-    // Set just before the header is collapsed in code, so its OnToggle(false) can tell that from the user collapsing the one open area.
+    // set just before collapsing in code so OnToggle(false) can tell it from the user collapsing
     public bool AllowProgrammaticCollapse { get; set; }
     public void InitializeAnimation()
     {
@@ -22,7 +22,6 @@ public sealed class AnimatedAreaHeaderNode : CollapsingHeaderNode
         RecalculateLayout();
     }
 
-    // Only opening is animated; closing snaps shut.
     private const float OpenAnimationDurationMs = 90.0f;
 
     public bool Tick()

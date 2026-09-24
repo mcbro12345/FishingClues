@@ -4,7 +4,7 @@ using KamiToolKit.Nodes;
 using KamiToolKit.BaseTypes;
 
 namespace FishingClues.UI.Components;
-// Adapter for the exact bundled toolkit version. Popup nodes have no public sizing API.
+// adapter for the bundled toolkit version, popup nodes have no public sizing API
 public sealed class SizedDropDownNode<T> : DropDownNode<T>
 {
     public SizedDropDownNode() { OnUncollapsed += ResizePopup; }
@@ -12,8 +12,7 @@ public sealed class SizedDropDownNode<T> : DropDownNode<T>
         base.OnSizeChanged();
         if (LabelNode == null) return;
         LabelNode.Width = Math.Max(1, Width - 32);
-        // SetText applies ellipsis immediately. Restore the original text AFTER
-        // resizing, otherwise a string shortened at the old width stays shortened.
+        // SetText ellipsizes right away, restore the text AFTER resizing or it stays shortened
         if (SelectedOption is not null && GetLabelFunction is not null) LabelNode.String = GetLabelFunction(SelectedOption);
         ResizePopup();
     }

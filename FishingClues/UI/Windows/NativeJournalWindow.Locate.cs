@@ -8,9 +8,7 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.UI.Windows;
 
-// The "select the fishing hole I'm standing at" button, in the region column's
-// bottom right corner just left of the map button. It works whether or not
-// the area map is shown.
+// button that selects the nearest hole
 public sealed partial class NativeJournalWindow
 {
     private const string LocateTooltip = "Select the nearest fishing hole";
@@ -20,10 +18,7 @@ public sealed partial class NativeJournalWindow
     private TextureButtonNode? locateButton;
     private TextureButtonNode? settingsButton;
 
-    // The map toggle and this locate button sit as a pair in the region column's
-    // bottom right corner. Their 28px sprites have about 5px of clear padding
-    // around a ~17px gold button, so the boxes overlap by 8px and the pair
-    // hangs 3px past the column's edge.
+    // map toggle and this button sit as a pair, the sprites are padded so the boxes overlap
     private const float CornerButtonSize = 28.0f;
     private const float CornerButtonGap = -8.0f;
     private const float CornerButtonRightOverhang = 3.0f;
@@ -36,10 +31,7 @@ public sealed partial class NativeJournalWindow
 
     private const float SettingsButtonSize = 28.0f;
 
-    // Title bar, laid out as in the game's own command panel (its diagnostics
-    // report: close button 28x28 at x=258,y=10; round settings button 28x28 at
-    // x=232,y=6): the round button sits 26px left of the close button's left edge
-    // and 4px above its top. Our close button is at (Width - 33, 6).
+    // same layout as the game's own title bar
     private void PositionSettingsButton()
     {
         if (settingsButton is null) return;
@@ -51,8 +43,6 @@ public sealed partial class NativeJournalWindow
 
     private void CreateLocateButton()
     {
-        // The button from the game's own map window toolbar (the one under
-        // the up arrow), framed like the other buttons.
         locateButton = new TextureButtonNode
         {
             Size = new Vector2(CornerButtonSize, CornerButtonSize),
@@ -70,13 +60,10 @@ public sealed partial class NativeJournalWindow
     {
         PositionSettingsButton();
         if (locateButton is null) return;
-        // Just left of the map button in the region column's bottom right
-        // corner (see MapButtonPosition).
         locateButton.Position = MapButtonPosition() - new Vector2(CornerButtonSize + CornerButtonGap, 0.0f);
         locateButton.IsVisible = !GuideMode;
     }
 
-    // Called every frame; only does real work a couple of times a second.
     private void UpdateLocateButton()
     {
         if (locateButton is null || GuideMode) return;
@@ -93,18 +80,13 @@ public sealed partial class NativeJournalWindow
         }
     }
 
-    // The nearest unlocked fishing hole in the player's current zone; null only
-    // when the zone has no unlocked holes at all. Previously this required the
-    // player to be standing inside the hole's range circle, but that circle
-    // (derived from the sheet's casting Radius) is often smaller than where the
-    // hole actually lets you fish, which left the button greyed out while
-    // standing right at an unlocked hole.
+    // nearest unlocked hole in the current zone, null if there are none
     private JournalSpot? FindCurrentHole()
     {
         uint territory = Services.ClientState.TerritoryType;
         if (territory == 0) return null;
 
-        var candidates = regions.SelectMany(r => r.Areas).SelectMany(a => a.Spots)
+        var candidates = regions.AllSpots()
             .Where(s => s.TerritoryId == territory && s.IsUnlocked).ToList();
         if (candidates.Count <= 1) return candidates.Count == 0 ? null : candidates[0];
 

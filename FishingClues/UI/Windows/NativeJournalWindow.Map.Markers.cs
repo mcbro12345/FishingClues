@@ -2,45 +2,35 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
-using System.Threading.Tasks;
 using Dalamud.Interface.Textures.TextureWraps;
 using FFXIVClientStructs.FFXIV.Client.System.Input;
-using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using KamiToolKit.Nodes;
 
-using FishingClues.Base;
 using FishingClues.Game.Models;
 
 namespace FishingClues.UI.Windows;
 
-// The fishing hole markers: a fish icon, a range circle behind it, and a tooltip.
+// hole markers: fish icon, range circle, tooltip
 public sealed partial class NativeJournalWindow
 {
-    // Fish icon size in screen pixels, whatever the zoom.
     private const float MapMarkerSize = 30.0f;
-    // The sheet's fishing spot Radius divided by this is the circle's radius in map pixels.
+    // circle radius in map px = sheet Radius / this
     private const float RadiusToMapPixelDivisor = 7.0f;
     private const float MinCircleRawDiameter = 40.0f;
     private const uint FishMapMarkerIconId = 60929;
 
-    // The icon is the key: it sits on the unscaled mapClip layer and is placed by
-    // hand, while its circle is on the scaled mapContent layer, so the icon keeps
-    // its size and the circle grows and shrinks with the zoom.
+    // icon on the unscaled mapClip layer, circle on the scaled mapContent layer
     private readonly Dictionary<ImGuiImageNode, (JournalSpot Spot, ImGuiImageNode Circle)> mapMarkers = new();
-    // One pre-rendered tooltip per marker: swapping one shared node's text
-    // flashed the previous name for a frame.
+    // one tooltip per marker, sharing one flashed the old name
     private readonly Dictionary<ImGuiImageNode, BackgroundTextNode> markerTooltips = new();
     private readonly HashSet<BackgroundTextNode> measuredTooltips = new();
     private ImGuiImageNode? hoveredMarker;
 
-    // The circle's diameter in map pixels.
     private static float MarkerCircleRawDiameter(JournalSpot spot)
         => Math.Max(MinCircleRawDiameter, spot.Radius / RadiusToMapPixelDivisor * 2.0f);
 
-    // Brings the markers in line with the wanted spots. Markers for spots that are still wanted
-    // stay as they are: a new marker draws blank until its icon loads, which showed as a flash
-    // every time a marker was clicked.
+    // keep markers for spots still wanted, new ones flash blank until the icon loads
     private void RebuildMapMarkers(IReadOnlyList<JournalSpot> spots)
     {
         if (mapClip is null || mapContent is null || markerLayer is null || tooltipLayer is null) return;
@@ -56,10 +46,10 @@ public sealed partial class NativeJournalWindow
         foreach (JournalSpot spot in wanted.Values)
         {
             if (shown.Contains(spot.Id)) continue;
-            // Circle first so it draws behind the icon.
+            // circle first so it's behind the icon
             var circle = new ImGuiImageNode { FitTexture = true };
             circle.AttachNode(mapContent);
-            circle.LoadTexture(CreateAreaCircleTexture());
+            circle.LoadTexture(SharedAreaCircleTexture());
             circle.TextureSize = new Vector2(MapAreaCircleTextureSize, MapAreaCircleTextureSize);
             var icon = new ImGuiImageNode
             {
@@ -69,8 +59,7 @@ public sealed partial class NativeJournalWindow
             };
             icon.AttachNode(markerLayer);
             mapMarkers.Add(icon, (spot, circle));
-            _ = LoadMarkerIconAsync(icon);
-            // The tooltip is on the top layer, so it draws over every icon.
+            _ = LoadGameIconAsync(icon, FishMapMarkerIconId, () => mapMarkers.ContainsKey(icon));
             var tooltip = new BackgroundTextNode
             {
                 FontType = FontType.Axis,
@@ -103,35 +92,7 @@ public sealed partial class NativeJournalWindow
 
     private static readonly Vector2 OffscreenTooltipPosition = new(-10000.0f, -10000.0f);
 
-    private async Task LoadMarkerIconAsync(ImGuiImageNode icon)
-    {
-        IDalamudTextureWrap texture;
-        try
-        {
-            texture = await Services.TextureProvider.GetFromGameIcon(FishMapMarkerIconId).RentAsync();
-        }
-        catch (Exception ex)
-        {
-            Services.Log.Warning(ex, "[FishingClues] Area map: failed to load a marker icon.");
-            return;
-        }
-
-        await Services.Framework.Run(() =>
-        {
-            // The marker may have been torn down while the icon was loading.
-            if (!mapMarkers.ContainsKey(icon))
-            {
-                texture.Dispose();
-                return;
-            }
-            icon.LoadTexture(texture);
-            icon.Alpha = 1.0f;
-        });
-    }
-
-    // Repositions every marker for the current pan, zoom and column width.
-    // Visibility is tracked by hand: mapClip's clip hides rendering but not
-    // hit-testing, so an off-screen marker would stay clickable.
+    // mapClip clips drawing but not hit-testing, so visibility is tracked by hand
     private void UpdateMarkerLayout()
     {
         if (mapClip is null || mapContent is null) return;
@@ -158,20 +119,16 @@ public sealed partial class NativeJournalWindow
             data.Circle.IsVisible = pixel.X + circleRaw / 2.0f >= viewLeft && pixel.X - circleRaw / 2.0f <= viewLeft + viewWidth
                 && pixel.Y + circleRaw / 2.0f >= viewTop && pixel.Y - circleRaw / 2.0f <= viewTop + viewHeight;
         }
-        // Same pass as the icons, so the player marker never trails the map by a frame.
         unsafe { UpdatePlayerMarker(); }
         RefreshMarkerTooltip();
     }
 
-    // Shows the hovered marker's tooltip above its icon (below when there is no
-    // room, kept inside the map) and hides all the others.
     private void RefreshMarkerTooltip()
     {
         if (mapClip is null) return;
         foreach (var (icon, tip) in markerTooltips)
             if (!ReferenceEquals(icon, hoveredMarker) && (tip.IsVisible || tip.Alpha > 0.0f))
             {
-                // Hidden three ways at once so a late-applied change can't leave it showing.
                 tip.IsVisible = false;
                 tip.Alpha = 0.0f;
                 tip.Position = OffscreenTooltipPosition;
@@ -190,8 +147,7 @@ public sealed partial class NativeJournalWindow
         tooltip.IsVisible = true;
     }
 
-    // Called every frame: sizes each hidden tooltip once its text can be
-    // measured, a few frames after it was created.
+    // text can only be measured a few frames after creation
     private void MeasurePendingTooltips()
     {
         if (measuredTooltips.Count >= markerTooltips.Count) return;
@@ -222,8 +178,7 @@ public sealed partial class NativeJournalWindow
     private void TryClickMarker(CursorInputData mouse, float scale)
     {
         if (MarkerAt(mouse, scale) is not { } icon || !mapMarkers.TryGetValue(icon, out var data)) return;
-        // the marker has no button of its own, so nothing plays a click sound unless this does
-        unsafe { UIGlobals.PlaySoundEffect(UiClickSoundEffectId); }
+        PlayClickSound();
         NavigateToSpot(data.Spot);
     }
 }

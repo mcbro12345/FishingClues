@@ -10,10 +10,7 @@ using FishingClues.Game.Models;
 
 namespace FishingClues.UI.Windows;
 
-// The area map under the area list: the zone's own map with a marker per
-// discovered fishing hole. This file holds the state and the panel's lifecycle;
-// see the other NativeJournalWindow.Map.*.cs files for textures, markers, the
-// player marker, pan/zoom and layout.
+// area map panel, see the other Map.* files
 public sealed partial class NativeJournalWindow
 {
     private const float MapDividerHeight = 10.0f;
@@ -26,14 +23,12 @@ public sealed partial class NativeJournalWindow
     private const float MinMapZoom = 1.0f;
     private const float MaxMapZoom = 15.0f;
     private const float MapZoomStep = 1.25f;
-    // A hole picked from the list is zoomed so its range circle fills this
-    // fraction of the map view's shorter side.
+    // zoom so a picked hole's range circle fills this much of the view
     private const float MapCircleFitFraction = 0.7f;
 
     private ResNode? mapClip;
     private ResNode? mapContent;
-    // Draw order above the map: hole icons, then the player marker, then tooltips. Each has its own
-    // layer so a marker added later still draws in the right place.
+    // draw order: hole icons, player marker, tooltips
     private ResNode? markerLayer;
     private ResNode? playerLayer;
     private ResNode? tooltipLayer;
@@ -49,20 +44,18 @@ public sealed partial class NativeJournalWindow
     private ImGuiImageNode? mapBorderLeft;
     private ImGuiImageNode? mapBorderRight;
 
-    // mapArea is the area of the last hole actually picked; previewArea is only
-    // tracked for the generic backdrop shown before any hole has been picked.
+    // mapArea = last picked hole's area, previewArea = backdrop before any pick
     private JournalArea? mapArea;
     private JournalArea? previewArea;
 
     private float mapPanX;
     private float mapPanY;
     private float mapZoom = MinMapZoom;
-    // True from opening the window until the first area map is shown, which
-    // restores the zoom and pan saved when the journal was last closed.
+    // true until the first area map shows, restores the saved zoom/pan
     private bool restoreMapView;
     private bool mapPanelVisible = true;
 
-    // A hole picked while the map was hidden, applied when it is shown again.
+    // hole picked while the map was hidden
     private bool hasPendingMapFocus;
     private JournalSpot? pendingMapFocusSpot;
     private bool pendingMapZoomToSpot;
@@ -70,7 +63,6 @@ public sealed partial class NativeJournalWindow
 
     private bool MapEnabled => !GuideMode && configuration.ShowAreaLocationMap && mapPanelVisible;
 
-    // The map's space is taken from the area list above it.
     private float ReservedMapHeight() => MapEnabled
         ? MapDividerHeight + MapCaptionHeight + EffectiveMapHeight() + MapPanelSpacing
         : 0.0f;
@@ -84,9 +76,7 @@ public sealed partial class NativeJournalWindow
         mapZoom = MinMapZoom;
         restoreMapView = sessionState.MapZoom > 0.0f;
 
-        // Starts hidden (LayoutMapPanel turns it back on once it knows whether the map is
-        // open) - a node is visible from creation until something says otherwise, and it
-        // has no position yet either.
+        // hidden until LayoutMapPanel decides
         mapCaptionDivider = new HorizontalLineNode { Height = 2.0f, IsVisible = false };
         mapCaptionDivider.AttachNode(this);
         mapAreaName = new LabelTextNode { Height = 18.0f, FontSize = 14, String = "", IsVisible = false };
@@ -108,7 +98,7 @@ public sealed partial class NativeJournalWindow
         playerLayer.AttachNode(mapClip);
         tooltipLayer = new ResNode();
         tooltipLayer.AttachNode(mapClip);
-        // Image nodes without a texture draw black, so they start transparent.
+        // no texture draws black, so start transparent
         mapImage = new ImGuiImageNode { Size = new Vector2(2048.0f, 2048.0f), Alpha = 0.0f };
         mapImage.AttachNode(mapContent);
 
@@ -131,7 +121,7 @@ public sealed partial class NativeJournalWindow
 
     private ImGuiImageNode CreateBorderNode(bool vertical, bool outerFirst)
     {
-        // Each node owns (and disposes) its texture, so they can't share one.
+        // each node owns its texture, can't share
         var border = new ImGuiImageNode { FitTexture = true };
         border.LoadTexture(CreateBronzeBorderTexture(vertical, outerFirst));
         border.TextureSize = new Vector2(MapBorderPatternSize, MapBorderPatternSize);
@@ -144,8 +134,7 @@ public sealed partial class NativeJournalWindow
         mapPanelVisible = !mapPanelVisible;
         configuration.MapPanelOpen = mapPanelVisible;
         options.SaveLayout();
-        // While hidden the map skips its texture and marker work, so catch up
-        // now. Zoom and pan are untouched while hidden and come back as left.
+        // catch up on what was skipped while hidden
         if (mapPanelVisible)
         {
             if (mapArea is not null && hasPendingMapFocus)
@@ -167,8 +156,6 @@ public sealed partial class NativeJournalWindow
         LayoutAttachedNodes();
     }
 
-    // Before any hole has been picked the panel shows the whole-continent map
-    // with no markers, so it doesn't start out empty.
     private void RefreshMapPreview(JournalArea? area)
     {
         previewArea = area;
@@ -182,8 +169,7 @@ public sealed partial class NativeJournalWindow
         ApplyMapPan();
     }
 
-    // Called when a hole is picked, from the area list or a marker click.
-    // Expanding an area or switching region leaves the map alone.
+    // a hole was picked (list or marker click)
     private void ShowAreaMap(JournalArea area, JournalSpot? focusSpot = null, bool zoomToSpot = false, bool preserveView = false)
     {
         bool areaChanged = !ReferenceEquals(mapArea, area);
@@ -203,7 +189,7 @@ public sealed partial class NativeJournalWindow
         if (areaChanged) mapZoom = MinMapZoom;
 
         var withMap = area.Spots.Where(s => s.MapPixelPosition is not null).ToArray();
-        // Undiscovered holes get no pin, which would give away where they are.
+        // no pin for undiscovered holes, it'd give them away
         var discoveredWithMap = withMap.Where(s => s.IsUnlocked).ToArray();
         Services.Log.Debug($"[FishingClues] Area map: '{area.Name}' has {area.Spots.Count} spot(s), "
             + $"{withMap.Length} with a map position ({discoveredWithMap.Length} discovered); texture='{withMap.FirstOrDefault()?.MapTexturePath}'");
@@ -243,7 +229,6 @@ public sealed partial class NativeJournalWindow
         ApplyMapPan();
     }
 
-    // The middle of the box containing every spot, or null if none has a position.
     private static Vector2? AreaFocusPixel(IReadOnlyList<JournalSpot> spots)
     {
         var pixels = spots.Where(s => s.MapPixelPosition is not null).Select(s => s.MapPixelPosition!.Value).ToArray();
@@ -252,7 +237,6 @@ public sealed partial class NativeJournalWindow
             (pixels.Min(p => p.Y) + pixels.Max(p => p.Y)) / 2.0f);
     }
 
-    // Jumps to the region, area and hole a marker was clicked for.
     private void NavigateToSpot(JournalSpot spot, bool zoomToSpot = false)
     {
         if (!spot.IsUnlocked) return;
@@ -267,7 +251,6 @@ public sealed partial class NativeJournalWindow
         SelectSpot(spot, zoomToSpot);
     }
 
-    // The area map's part of the diagnostics report.
     public string DescribeMapState()
     {
         var report = new System.Text.StringBuilder();
@@ -291,11 +274,7 @@ public sealed partial class NativeJournalWindow
         return report.ToString();
     }
 
-    // Called only from OnFinalize, after base.OnFinalize(addon) has already torn down
-    // the whole native node tree the window owns (everything below was attached under
-    // `this`). So this only drops the C# references - it must not call .Dispose() on
-    // any of them, or it double-frees native memory the base class just freed, which
-    // showed up as an intermittent game crash on closing the window.
+    // only drops references, base.OnFinalize already freed the nodes (disposing twice crashed)
     private void DisposeMapPanel()
     {
         mapMarkers.Clear();
