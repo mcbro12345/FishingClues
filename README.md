@@ -48,7 +48,7 @@ A Dalamud plugin for FFXIV that gives you a better Fishing Log: spoiler-consciou
 1. Open the game chat and type `/xlsettings`, then click the **Experimental** tab.
 2. Under **Custom Plugin Repositories**, paste this URL into the empty box at the bottom:
    ```
-   https://raw.githubusercontent.com/mcbro12345/FishingClues/main/pluginmaster.json
+   https://raw.githubusercontent.com/mcbro12345/DalamudPlugins/main/pluginmaster.json
    ```
 3. Click the **+** button to add it, then **Save and Close**.
 4. Type `/xlplugins` to open the Plugin Installer, search for "Fishing Clues," and click **Install**.
